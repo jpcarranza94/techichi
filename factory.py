@@ -42,7 +42,7 @@ def parse_ref(pol, text):
         return "ticket", t.upper()
     m = re.fullmatch(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)/?", t)
     if m:
-        repos = {p["github"].lower(): p["github"] for p in pol["projects"].values()}
+        repos = {p["github"].lower(): p["github"] for p in pol["projects"].values() if "github" in p}
         if m[1].lower() in repos:
             return "pr", f"https://github.com/{repos[m[1].lower()]}/pull/{m[2]}"  # the pr_link.py form
         raise ValueError(f"{m[1]} is not a policy repo")
@@ -162,7 +162,12 @@ def done(con, pol, s, now):
             return no(f"{t} not found in Jira")
         if not d:
             return no(f"{t} not Done in Jira")
-    if not prs:
+    if "github" not in pol["projects"].get(s["project"], {}):
+        # Another forge: no PR check. A Done Jira ticket is then the only signal that the work ended.
+        if not any(jira_ticket(con, pol, t) for t in tickets):
+            return no("no GitHub and no Jira: run factory.py cleanup KEY")
+        prs = []
+    elif not prs:
         return no("no PR")
     for p in prs:
         if not pr_closed(p):

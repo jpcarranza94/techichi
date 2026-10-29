@@ -54,7 +54,7 @@ def kinds(pol):
 def start_args(name, sid, pol, skill_dirs=()):
     """The agent arguments after `--`: the session flag and id first, then the harness and policy args."""
     h = HARNESSES[name]
-    args = [h["session"], sid, *h["args"], *pol.get("harness", {}).get(name, {}).get("args", [])]
+    args = [h["session"], sid, *h["args"], *map(os.path.expanduser, pol.get("harness", {}).get(name, {}).get("args", []))]
     if h["skills"] == "arg":
         for d in skill_dirs:
             args += [h["skill_flag"], str(d)]

@@ -130,6 +130,17 @@ f.done(con, pol, s(), T0)
 con.execute("UPDATE sessions SET agent_status = 'working' WHERE session_id = ?", (W,))
 assert f.done(con, pol, s(), T61) == (False, "agent working") and clock() is None  # any status change resets
 con.execute("UPDATE sessions SET agent_status = 'done' WHERE session_id = ?", (W,))
+# No github: no PR check. A Done Jira ticket must then exist. Without Jira, cleanup is by hand only.
+nogh = {**pol, "projects": {**pol["projects"], "APP": {k: v for k, v in pol["projects"]["APP"].items() if k != "github"}}}
+con.execute("DELETE FROM links WHERE kind = 'pr' AND session_id = ?", (W,))
+f.done(con, nogh, s(), T0)
+assert f.done(con, nogh, s(), T61) == (True, "")
+state["jira"] = False
+assert f.done(con, nogh, s(), T61) == (False, "APP-1325 not Done in Jira")
+state["jira"] = True
+nojira = {**nogh, "factory": {**nogh["factory"], "sources": []}}
+assert f.done(con, nojira, s(), T61) == (False, "no GitHub and no Jira: run factory.py cleanup KEY")
+registry.link(con, "pr", "https://github.com/acme/app/pull/574", W, "hook:pr_link")
 
 # --- the Action: order, no --force, no -D, and a stop on a dirty worktree ---
 steps = []

@@ -101,3 +101,6 @@ assert [m for m, _ in calls] == ["pane.report_metadata", "agent.prompt"]
 assert "Load the techichi-worker skill" in calls[-1][1]["text"]
 assert c2.execute("SELECT project FROM sessions WHERE session_id = ?", (sid,)).fetchone()[0] == "WEB"
 print("ok")
+
+# A ~ in the policy args expands: herdr starts the agent with no shell.
+assert harness.start_args("pi", "s", {"harness": {"pi": {"args": ["--skill", "~/sk"]}}})[-1] == os.path.expanduser("~/sk")

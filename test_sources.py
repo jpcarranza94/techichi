@@ -106,9 +106,11 @@ registry.link(con, "pr", "https://github.com/acme/web/pull/3", "s-iss7", "hook:p
 s = con.execute("SELECT * FROM sessions WHERE session_id = 's-iss7'").fetchone()
 assert factory.done(con, pol, s, "2026-10-28T10:00:00Z") == (False, "idle clock started") and asked == []
 
-# --- The derived PR Link: only for a harness with no recorder ---
-for name, links in (("claude", 0), ("pi", 1)):
-    hp = {**pol, "factory": {**pol["factory"], "harness": name}}
+# --- The derived PR Link: only for a harness with no recorder, or a project with no github (another forge) ---
+nogh = {k: v for k, v in pol["projects"]["APP"].items() if k != "github"}
+for name, links, projects in (("claude", 0, pol["projects"]), ("pi", 1, pol["projects"]),
+                              ("claude", 1, {**pol["projects"], "APP": nogh})):
+    hp = {**pol, "factory": {**pol["factory"], "harness": name}, "projects": projects}
     c = registry.connect(Path(tempfile.mkdtemp(), "h.db"))
     c.execute("INSERT INTO sessions (session_id, role, project, agent_status, state, pane_id) "
               "VALUES ('w1', 'worker', 'APP', 'idle', 'live', 'p1')")
@@ -120,6 +122,13 @@ for name, links in (("claude", 0), ("pi", 1)):
     made = c.execute("SELECT created_by FROM links WHERE kind = 'pr'").fetchall()
     assert len(made) == links and got == (["p1"] if links else []), name
     assert not made or made[0][0] == "derived:branch"
+
+# A command Source keeps a safe head branch on a pr Event only. A GitLab MR links the same way.
+mr = {"id": "m1", "kind": "pr", "ref": "https://gitlab.example.com/acme/app/-/merge_requests/9", "payload": {"head": "APP-7-x"}}
+assert command_source.check(json.dumps(mr), pol, "mrs")["payload"]["head"] == "APP-7-x"
+for bad in ("../x", "a b", "x;rm", ""):
+    assert "head" not in command_source.check(json.dumps({**mr, "payload": {"head": bad}}), pol, "mrs")["payload"], bad
+assert "head" not in command_source.check(json.dumps({**mr, "kind": "ticket", "ref": "APP-7"}), pol, "mrs")["payload"]
 
 # --- The GitHub Source reads the head branch only when a harness with no recorder is in use ---
 note = {"id": "n", "updated_at": "2026-10-28T15:44:49Z", "repository": {"full_name": "acme/app"},

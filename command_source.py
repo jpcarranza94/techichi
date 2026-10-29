@@ -8,7 +8,8 @@
   timeout_seconds = 60     # default 60
 
 The command gets TECHICHI_SINCE: the start time of its last good run, or an empty string on the first run.
-Each line is {"id", "kind", "ref", "payload": {"what", "actor", "at", "url", "self", "admitted", "project", "slug"}}.
+Each line is {"id", "kind", "ref", "payload": {"what", "actor", "at", "url", "self", "admitted", "project", "slug", "head"}}.
+A pr Event with payload.head (its branch) links to the Session that owns that branch, for example a GitLab MR.
 An admitted ticket needs a key-shaped ref (APP-12) and a policy project: payload.project, or the key prefix.
 A bad line is skipped with one log line, and the line itself is never echoed: it is text from anyone.
 A failed run (exit code, timeout) moves no cursor. Event ids deduplicate, so a run can repeat Events.
@@ -28,6 +29,7 @@ import registry
 
 KEY = re.compile(r"[A-Z][A-Z0-9_]*-\d+")
 SLUG = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+BRANCH = re.compile(r"[\w./-]{1,200}")
 TEXT = ("what", "actor", "at", "url")
 
 
@@ -50,6 +52,8 @@ def check(line, pol, name):
         raise ValueError("payload is not an object")
     out = {k: re.sub(r"[\x00-\x1f]", " ", p[k])[:300] for k in TEXT if isinstance(p.get(k), str)}
     out.update(self=p.get("self") is True, admitted=p.get("admitted") is True)
+    if ev["kind"] == "pr" and isinstance(p.get("head"), str) and BRANCH.fullmatch(p["head"]) and ".." not in p["head"]:
+        out["head"] = p["head"]
     if out["admitted"]:
         if ev["kind"] != "ticket" or not KEY.fullmatch(ev["ref"]):
             raise ValueError("an admitted Event needs kind ticket and a ref like APP-12")

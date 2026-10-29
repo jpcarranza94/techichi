@@ -59,11 +59,13 @@ def key_in(key, text):
 
 
 def existing_work(key, p):
-    """Local or remote branches and open PRs that name the key."""
+    """Local or remote branches, and open GitHub PRs, that name the key."""
     refs = run([config.GIT, "-C", p["repo"], "for-each-ref", "--format=%(refname:short)", "refs/heads"]).split()
     refs += [l.split("refs/heads/", 1)[1] for l in
              run([config.GIT, "-C", p["repo"], "ls-remote", "--heads", "origin"]).splitlines() if "refs/heads/" in l]
     found = [f"branch {b}" for b in dict.fromkeys(refs) if key_in(key, b)]
+    if "github" not in p:
+        return found  # another forge: the branches are enough
     prs = json.loads(run([config.GH, "pr", "list", "-R", p["github"], "--state", "open", "--search", key,
                           "--json", "number,title,headRefName,url"]) or "[]")
     found += [f"PR {x['url']}" for x in prs if key_in(key, x["title"]) or key_in(key, x["headRefName"])]
@@ -115,9 +117,12 @@ def spawn(key, slug=None, pol=None, db=None):
 
 
 def _prepare(key, p, project, branch, sid, con, pol):
-    # 2. Default branch from GitHub.
-    base = run([config.GH, "repo", "view", p["github"], "--json", "defaultBranchRef",
-                "-q", ".defaultBranchRef.name"]).strip()
+    # 2. Default branch from GitHub, or from the HEAD of origin.
+    if "github" in p:
+        base = run([config.GH, "repo", "view", p["github"], "--json", "defaultBranchRef",
+                    "-q", ".defaultBranchRef.name"]).strip()
+    else:  # "ref: refs/heads/main\tHEAD"
+        base = run([config.GIT, "-C", p["repo"], "ls-remote", "--symref", "origin", "HEAD"]).split("\t")[0].split("refs/heads/")[1]
     run([config.GIT, "-C", p["repo"], "fetch", "--quiet", "origin", base])
 
     # 3. Worktree, workspace and pane.

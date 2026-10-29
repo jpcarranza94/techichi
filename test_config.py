@@ -51,7 +51,11 @@ assert bad({"jira": MIN["jira"]}) == "p.toml: no [projects.<KEY>] table"
 assert bad({"projects": MIN["projects"], "factory": {"sources": ["github", "jira"]}}) == \
     "p.toml: [jira] needs api, site, email, token_file"  # [jira] only when the Jira Source is on
 assert config.complete({"projects": MIN["projects"]})["factory"]["sources"] == ["github"]  # no Jira, no Slack
-assert bad({**MIN, "projects": {"WEB": {"repo": "r", "start": {}}}}) == "p.toml: [projects.WEB] needs github"
+assert bad({**MIN, "projects": {"WEB": {"repo": "r"}}}) == "p.toml: [projects.WEB] needs start"
+# github is optional. With no GitHub project, the github Source is off by default.
+NOGH = {"projects": {"WEB": {"repo": "r", "start": {"skill": "s"}}}}
+assert config.complete(NOGH)["factory"]["sources"] == []
+assert bad({**NOGH, "jira": {}}).endswith("[jira] needs api, site, email, token_file")  # jira on, github off
 assert bad({**MIN, "slack": {"me": "U1"}}) == "p.toml: [slack] needs channels, hosts"
 assert bad({**MIN, "projects": {"WEB": {**MIN["projects"]["APP"], "start": {}}}}) == "p.toml: [projects.WEB.start] needs skill"
 

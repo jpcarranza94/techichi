@@ -81,6 +81,19 @@ real_run = spawn.run
 spawn.run = lambda cmd, **kw: next(v for k, v in outputs.items() if k in cmd)
 p = {"repo": "/nowhere", "github": "o/r"}
 assert spawn.existing_work("APP-12", p) == ["branch APP-12-old-try", "branch app-12-remote", "PR https://github.com/o/r/pull/7"]
+assert spawn.existing_work("APP-12", {"repo": "/nowhere"}) == ["branch APP-12-old-try", "branch app-12-remote"]  # no gh
+
+# No github: the base branch is the HEAD of origin, from git.
+cmds = []
+spawn.run = lambda cmd, **kw: cmds.append(cmd) or ("ref: refs/heads/trunk\tHEAD\nabc\tHEAD\n" if "--symref" in cmd else "")
+real_wc = herdr.worktree_create
+herdr.worktree_create = lambda repo, branch, base, *a: (_ for _ in ()).throw(RuntimeError(base))
+try:
+    spawn._prepare("APP-12", {"repo": "/nowhere"}, "APP", "APP-12", "sid", None, config.policy())
+except RuntimeError as e:
+    assert str(e) == "origin/trunk" and not any("gh" in c[0] for c in cmds), (e, cmds)
+herdr.worktree_create = real_wc
+spawn.run = lambda cmd, **kw: next(v for k, v in outputs.items() if k in cmd)
 
 # spawn() raises ExistingWork before any row. A plan row with hold = 0 skips the pre-check.
 with tempfile.TemporaryDirectory() as d:

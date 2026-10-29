@@ -1,6 +1,6 @@
 ---
 name: techichi-planner
-description: Decide which admitted Jira tickets the factory starts, and in which order, when tickets compete for slots or need a decision. Use when a "[factory]" prompt says that tickets need a plan or a decision, when the factory starts this session as the planner, or when the operator asks to plan the sprint for the factory. It reads the sprint in Jira, asks the operator where the team set the order, finds conflicts, drafts an order with holds, and writes it with plan.py after the operator approves. NOT for work on a ticket. A worker session uses the factory worker skill for that.
+description: Decide which admitted tickets the factory starts, and in which order, when tickets compete for slots or need a decision. Use when a "[factory]" prompt says that tickets need a plan or a decision, when the factory starts this session as the planner, or when the operator asks to plan the sprint for the factory. It reads the sprint or the backlog, asks the operator where the team set the order, finds conflicts, drafts an order with holds, and writes it with plan.py after the operator approves. NOT for work on a ticket. A worker session uses the factory worker skill for that.
 ---
 
 # Factory planner
@@ -9,7 +9,7 @@ BLUF: Draft the start order for the sprint tickets. Show the draft to the operat
 
 The factory starts one worker session for each admitted ticket. Usually it needs no plan. The factory opens the planner only in these cases:
 
-- `needs-plan`: more tickets wait than the free slots. No ticket starts in Jira order, because that order does not match what the team wants first. Only planned tickets start, lowest position first.
+- `needs-plan`: more tickets wait than the free slots. No ticket starts in the order of the ticket system, because that order does not match what the team wants first. Only planned tickets start, lowest position first.
 - `needs-decision`: the spawner found existing work for the ticket, a branch or an open pull request. The prompt names it.
 - `spawn failed`: the spawner failed for the ticket. Tell the operator what `plan.py show` and the daemon log say. The factory does not retry a failed spawn. The operator runs `spawn.py` by hand.
 
@@ -19,7 +19,7 @@ The factory starts this session itself, or sends it a prompt that lists the tick
 
 - Never start a worker. Never run `spawn.py`.
 - Never edit `policy.toml`.
-- Never write to Jira or Slack. Read only.
+- Never write to the ticket system or Slack. Read only.
 - Write the plan only with `plan.py`. Never edit `registry.db` by hand.
 - To see the whole factory, run `python3 {factory}/factory.py status`. It reads only.
 - When the operator approves it, link a session that the operator started by hand to its ticket, PR, or Slack thread: `python3 {factory}/factory.py claim REF --session PANE`. Never run `factory.py cleanup`.
@@ -28,7 +28,7 @@ The factory starts this session itself, or sends it a prompt that lists the tick
 
 1. Run `python3 {factory}/plan.py claim-role`. This session becomes the planner.
 2. Run `python3 {factory}/plan.py show`. Note the tickets that wait, their reasons, the plan rows, and the free slots.
-3. Read the sprint with the Atlassian MCP tools. Get the operator's tickets in the policy projects in the open sprint and in the next sprint. For each ticket, read the priority, the status, the issue links, and the description.
+3. Read the operator's tickets in the policy projects, in the open sprint and the next sprint, or in the backlog. Use the tool that you have for the ticket system, for example the Atlassian MCP tools for Jira or `glab` for GitLab. For each ticket, read the priority, the status, the issue links, and the description.
 4. Ask the operator where the team set the order for this sprint. Read that source.
 5. Find the conflicts:
    - Two tickets that change the same code area. Start one, and hold the other until the first PR merges.

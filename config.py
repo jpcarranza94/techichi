@@ -40,7 +40,7 @@ def _defaults():
 
 SLACK = {"poll_minutes": 5, "max_poll_minutes": 30, "inbox": False}  # [slack] is optional. Without it no relay starts.
 REQUIRED = {"jira": ("api", "site", "email", "token_file"), "slack": ("me", "channels", "hosts"),
-            "project": ("repo", "github", "start")}
+            "project": ("repo", "start")}
 COMMAND = {"every_seconds": 60, "timeout_seconds": 60}
 
 
@@ -54,8 +54,10 @@ def complete(raw, where="policy"):
     f = pol["factory"]
     for k in ("worktrees", "helper_cwd", "relay_cwd"):
         f[k] = Path(os.path.expanduser(f[k]))
-    # No sources key: the order of the daemon before the key existed. github, then jira and slack if configured.
-    f.setdefault("sources", ["github"] + [s for s in ("jira", "slack") if s in raw])
+    # No sources key: the order of the daemon before the key existed. github if a project names a GitHub repo,
+    # then jira and slack if configured.
+    gh = any("github" in p for p in pol.get("projects", {}).values())
+    f.setdefault("sources", ["github"] * gh + [s for s in ("jira", "slack") if s in raw])
 
     def need(table, keys, name):
         missing = [k for k in keys if k not in table]

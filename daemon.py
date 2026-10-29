@@ -122,9 +122,14 @@ def process(con, pol, prompt=None, spawn=None, start_planner=None):
 
 
 def derive_links(con, pol):
-    """A harness with no recorder writes no pr Link. So link a PR Event to the Session whose branch Link equals
-    the PR head branch. The GitHub Source adds `head` only when such a harness is in use."""
-    if all(harness.HARNESSES[n]["recorder"] for n in harness.in_use(pol)):
+    """A harness with no recorder, or a project on another forge, gets no pr Link from a hook. So link a PR Event
+    to the Session whose branch Link equals the PR head branch. The GitHub Source adds `head` only when a harness
+    with no recorder is in use. A command Source can send `head` for any forge."""
+    def hookless(project):
+        p = pol["projects"].get(project)
+        return p is not None and ("github" not in p or not harness.HARNESSES[harness.of_project(pol, project)]["recorder"])
+
+    if not any(hookless(k) for k in pol["projects"]):
         return
     for ev in con.execute("SELECT DISTINCT e.ref, json_extract(e.payload, '$.head') AS head FROM events e "
                           "WHERE e.kind = 'pr' AND e.status IN ('queued','unrouted') AND head IS NOT NULL "
@@ -132,7 +137,7 @@ def derive_links(con, pol):
         s = con.execute("SELECT s.session_id, s.project FROM sessions s JOIN links l USING (session_id) "
                         "WHERE l.kind = 'branch' AND l.ref = ? AND s.state != 'ended' ORDER BY s.created_at DESC",
                         (ev["head"],)).fetchone()
-        if s and s["project"] in pol["projects"] and not harness.HARNESSES[harness.of_project(pol, s["project"])]["recorder"]:
+        if s and hookless(s["project"]):
             registry.link(con, "pr", ev["ref"], s["session_id"], "derived:branch")
             log("derived pr link", ev["ref"], "to", s["session_id"])
 

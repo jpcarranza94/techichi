@@ -114,7 +114,7 @@ def poll(con, pol, dry_run=False, since=None, fetch=gh_all, login=me, list_fn=No
         if len(batch) < PER_PAGE or page >= MAX_PAGES:
             break
         page += 1
-    repos = {p["github"].lower() for p in pol["projects"].values()}
+    repos = {p["github"].lower() for p in pol["projects"].values() if "github" in p}
     n = 0
     for note in notes:
         if note["subject"]["type"] != "PullRequest" or note["repository"]["full_name"].lower() not in repos:

@@ -1,6 +1,6 @@
 # Techichi design
 
-BLUF: The factory routes Jira, GitHub, and Slack updates to the coding agent session that owns the work. It also starts one session for each new ticket in the sprint.
+BLUF: The factory routes ticket, pull request, and Slack updates from Jira, GitHub, Slack, or a command Source to the coding agent session that owns the work. It also starts one session for each new ticket in the sprint.
 
 The operator is the person who runs the factory. The config folder is `$TECHICHI_HOME`, default `~/.config/techichi`. It holds `policy.toml` and `registry.db`. `<core>` is the folder of this repo.
 
@@ -17,8 +17,8 @@ Nouns:
 
 Verbs:
 
-- **Source**: reads a source system and inserts Events. Examples: the GitHub Source and the Jira Source scripts, the herdr daemon. Slack has no Source yet.
-- **Recorder**: a Claude Code hook. It observes a deterministic action and inserts a Link or updates a Session.
+- **Source**: reads a source system and inserts Events. Examples: the GitHub Source, the Jira Source, a command Source, the herdr daemon. The Slack relay is a Claude Code session.
+- **Recorder**: a Claude Code hook. Other harnesses have none, see "Harness". It observes a deterministic action and inserts a Link or updates a Session.
 - **Router**: a pure function. It takes one Event and the registry and returns one decision.
 - **Action**: a side effect on herdr. Actions: `spawn`, `spawn_planner`, `spawn_relay`, `prompt`, `hold`, `claim`, `cleanup`. `claim` and `cleanup` are in `factory.py`.
 
@@ -48,7 +48,7 @@ Session states:
 - `gone`: the pane or the agent vanished without `SessionEnd`.
 - `ended`: the `SessionEnd` hook or the operator closed it.
 
-A herdr restart runs `claude --resume <uuid>`. The daemon then moves the Session from `gone` to `live`.
+A herdr restart resumes the agent with the same session id, for example `claude --resume <uuid>`. The daemon then moves the Session from `gone` to `live`.
 
 Event states:
 
@@ -105,7 +105,7 @@ Admission rules for rule 3. Free slots are `[spawn] max_active` minus the Sessio
 - d. The contenders do not fit. Only contenders with a plan row can spawn, lowest position first. The others stay `queued` with reason `needs-plan`. No ticket starts in Jira order while the operator plans.
 - e. A planned contender with no free slot stays `queued` with reason `capacity`.
 
-`process()` spawns at most one ticket per pass: the eligible one with the lowest plan position, then the oldest. It also waits `[spawn] gap_seconds` after the last spawn, from the cursor `spawn:last`. Simultaneous Claude starts can race on Claude's own config files. After a successful spawn, the Event is `delivered` to the new Session with reason `first-prompt`, because the kickoff prompt covers the ticket. A failed spawn marks the Event `unrouted` and does not repeat. The spawner gets the `slug` from the payload.
+`process()` spawns at most one ticket per pass: the eligible one with the lowest plan position, then the oldest. It also waits `[spawn] gap_seconds` after the last spawn, from the cursor `spawn:last`. Simultaneous agent starts can race on the config files of the agent, for example those of Claude Code. After a successful spawn, the Event is `delivered` to the new Session with reason `first-prompt`, because the kickoff prompt covers the ticket. A failed spawn marks the Event `unrouted` and does not repeat. The spawner gets the `slug` from the payload.
 
 ## Planner
 
@@ -140,9 +140,9 @@ The behavior for each kind lives in one user skill, the worker skill (`[skills] 
 
 The spawner runs for one ticket key. Steps:
 
-0. Pre-check, only when the ticket has no plan row: look for a local or remote branch whose name contains the key, and for an open pull request that names the key (`gh pr list --search`). If it finds work, it raises `ExistingWork` before any row or worktree exists. The Router then keeps the Event `queued` with reason `needs-decision`. A plan row with `hold = 0` means that the operator approved the start, so the pre-check does not run.
+0. Pre-check, only when the ticket has no plan row: look for a local or remote branch whose name contains the key, and, if the project has `github`, for an open pull request that names the key (`gh pr list --search`). If it finds work, it raises `ExistingWork` before any row or worktree exists. The Router then keeps the Event `queued` with reason `needs-decision`. A plan row with `hold = 0` means that the operator approved the start, so the pre-check does not run.
 1. Pick a UUID with `uuidgen`. Insert the Session as `registered` with role `worker`. Insert the `ticket` Link with `created_by = spawner`.
-2. Read the default branch: `gh repo view <github> --json defaultBranchRef -q .defaultBranchRef.name`.
+2. Read the default branch: `gh repo view <github> --json defaultBranchRef -q .defaultBranchRef.name`. A project with no `github` reads the HEAD of origin: `git ls-remote --symref origin HEAD`. This works for GitLab and any other git host.
 3. Run `herdr --session <session> worktree create --cwd <repo> --branch <branch> --base origin/<default> --path <worktrees>/<KEY> --label <KEY> --no-focus`. The branch is `<KEY>` or `<KEY>-<slug>`. Record `cwd`, `workspace_id`, `pane_id`. Insert the `branch` Link.
 4. Copy each file that `.worktreeinclude` lists and `git check-ignore` confirms. Run the `setup` commands from the policy.
 5. Run `herdr --session <session> agent start <key> --kind <harness kind> --pane <pane_id> -- <harness args>`. The project's harness builds the args: the session flag and the UUID first. See "Harnesses".
@@ -153,9 +153,9 @@ The branch exists with the key in its name, so the start skill adopts it. The wo
 
 The daemon sees `pane.agent_detected`, matches the UUID, and sets the Session to `live`.
 
-Usage: `spawn.py <KEY> [--slug <slug>]`. The agent name is the lowercase key. The Jira Source supplies the slug in the admission Event. The spawner makes no Jira call.
+Usage: `spawn.py <KEY> [--slug <slug>]`. The agent name is the lowercase key. The admission Event supplies the slug, from the Jira Source or a command Source. The spawner makes no call to the ticket system.
 
-Worktrees live under `[factory] worktrees`. Claude Code must trust that folder, or the trust dialog blocks the new agent. If a step fails, the spawner sets the Session to `ended`. The worktree stays for a manual retry.
+Worktrees live under `[factory] worktrees`. The coding agent must trust that folder, or the trust dialog blocks the new agent. If a step fails, the spawner sets the Session to `ended`. The worktree stays for a manual retry.
 
 ## Recorders
 
@@ -189,11 +189,11 @@ It subscribes to:
 
 `pane.agent_status_changed` needs one subscription for each pane. `pane.updated` carries `agent_status` and `agent_session` for all panes, so the daemon uses it instead.
 
-After a burst of events, the daemon reads `session.snapshot` one time. It matches each Claude agent to a Session by UUID and sets it `live`. It marks missing `live` Sessions `gone`. It inserts unknown agents as unclaimed `worker` Sessions. On each status change it reads `branch` from git. Then it runs one Router pass over all `queued`, `held`, and `unrouted` Events.
+After a burst of events, the daemon reads `session.snapshot` one time. It matches each agent of a harness kind to a Session by its session id and sets it `live`. It marks missing `live` Sessions `gone`. It inserts unknown agents as unclaimed `worker` Sessions. On each status change it reads `branch` from git. Then it runs one Router pass over all `queued`, `held`, and `unrouted` Events.
 
 When herdr is quiet, the daemon runs the same pass every 30 seconds. Thus Events from other Sources go out without a herdr event. On connect and on `events_lost`, it also re-applies the pane tokens.
 
-Before each Router pass, the daemon calls `github_source.poll` and `jira_source.poll`, each in its own `try`. A Source failure writes one log line. It never causes a herdr reconnect.
+Before each Router pass, the daemon polls each Source in `[factory] sources`, each in its own `try`. A Source failure writes one log line. It never causes a herdr reconnect.
 
 Held Events older than `notify_after_minutes` write one log line. The daemon does not page the operator. A held Event almost always means a blocked pane, and a herdr notifier already pages the operator for that.
 
@@ -223,13 +223,13 @@ A harness is the coding agent of a Session. `harness.py` holds one dict entry fo
 
 herdr reports the session of an agent as an id or as the path of a session file. `harness.session_id()` maps both to the id: a path `<time>_<id>.jsonl` (Pi) gives the part after the last `_`. `daemon.sync` matches the agents of every harness kind in use.
 
-A harness with no recorder writes no `pr` Link. Then the GitHub Source adds the PR head branch to the payload, and `daemon.derive_links()` links an unrouted PR Event to the Session whose `branch` Link equals that head branch, with `created_by = derived:branch`. With only recording harnesses in use, the GitHub Source reads no head branch, and the step does nothing.
+A harness with no recorder writes no `pr` Link. The `pr_link` hook also knows only GitHub URLs. So for a harness with no recorder, or a project with no `github`, `daemon.derive_links()` links an unrouted PR Event that has a `head` branch to the Session whose `branch` Link equals that head branch, with `created_by = derived:branch`. The GitHub Source adds `head` only when a harness with no recorder is in use. A command Source can send `head` on a `pr` Event, for example for a GitLab merge request. When every project has `github` and every harness records, the step does nothing.
 
 `test_harness.py` is the conformance test. Each entry must have a herdr kind, a session flag, a valid skills mode, a start command with the session id first, and a sample of its herdr session report.
 
 ## Command Source
 
-`[factory] sources` lists the Sources: `github`, `jira`, `slack`, or a name with a `[sources.<name>]` table. With no `sources` key, the list is `github`, then `jira` if `[jira]` exists, then `slack` if `[slack]` exists.
+`[factory] sources` lists the Sources: `github`, `jira`, `slack`, or a name with a `[sources.<name>]` table. With no `sources` key, the list is `github` if a project has `github`, then `jira` if `[jira]` exists, then `slack` if `[slack]` exists.
 
 A command Source runs `command` every `every_seconds` (default 60), with a timeout of `timeout_seconds` (default 60). The env has `TECHICHI_SINCE`, the start time of the last good run. The command prints one JSON object per line: `id`, `kind`, `ref`, and `payload`. `command_source.py` checks each line. The `kind` must be in `[route]`. An admitted Event must be a `ticket` with a key-shaped ref, and its project (`payload.project`, else the key prefix) must be in the policy. A bad line is skipped with one log line that never holds the line. A failed run moves no cursor. The Event id is `<name>:<id>`.
 
@@ -311,14 +311,14 @@ A test session proved it. Arbitrary Bash, chained commands, redirects, a heredoc
 
 - `factory.py claim REF [--session PANE|NAME|UUID]`: link a Session to a Ref with `created_by = claim`. REF is a ticket key of a policy project, a PR URL of a policy repo, or a Slack permalink, stored as `<channel>:<thread_ts or ts>`. Anything else is rejected. The default Session is the caller's pane. A missing Session row is inserted from the herdr agent record. The next Router pass delivers the `unrouted` Events of that Ref, and an admitted ticket with a Link does not spawn. There is no `unclaim`.
 - `factory.py status`: read only. The Sessions that are not `ended`, with role, agent name or pane, state, agent status, ticket, PRs, and held count. The slots in use against `max_active`. The waiting admitted tickets with their reasons. The unrouted Events by kind. The last write of each Source cursor. The planner and the relay.
-- `factory.py cleanup KEY`: run the cleanup Action for each worker Session on that ticket, a hand-started one too. It skips the Jira, PR, and idle checks, and it keeps the clean-worktree check. There is no `--force`. It also works for a `gone` or `ended` Session whose workspace is closed and whose checkout is left.
+- `factory.py cleanup KEY`: run the cleanup Action for each worker Session on that ticket, a hand-started one too. It skips the ticket, PR, and idle checks, and it keeps the clean-worktree check. There is no `--force`. It also works for a `gone` or `ended` Session whose workspace is closed and whose checkout is left.
 
 ## Cleanup
 
 Every 10 minutes, the daemon checks each `live` Session with a `spawner` `ticket` Link. It never touches a hand-started session, the planner, or the relay. A Session is done when all of these are true:
 
 - Its Jira ticket, if the Jira Source admitted it, has a status named in `[cleanup] done_statuses`: today `Done` and `Won't Do`. A 404 skips the Session. the operator works in a session after the merge, so the merge alone is not enough. The status category is not enough either: Jira puts `Ready for Deploy` in the done category, but the deploy and the validation come after it.
-- Each of its `pr` Links is merged or closed. A Session with no PR is not done.
+- Each of its `pr` Links is merged or closed. A Session with no PR is not done. This check needs `gh`, so it runs only for a project with `github`. A project with no `github` skips it, and then a Done Jira ticket must exist. With no Jira either, nothing tells the daemon that the work ended, so only `factory.py cleanup KEY` ends the Session.
 - Its agent status was `idle` or `done` at every check for at least 60 minutes. The cursor `cleanup:<session_id>` holds the first eligible time. Any failed condition resets it.
 - Its worktree is clean, and `HEAD` has no commit that no remote branch has. If the upstream branch is gone, the worktree is kept.
 
@@ -351,9 +351,9 @@ Each Session gets one try. The cursor `closed:<session_id>` records it. After a 
 
 ## Policy
 
-The file is `<config>/policy.toml`. `policy.example.toml` documents each key. It has a `[factory]` table, a `[skills]` table, one `[projects.<KEY>]` table per Jira project, a `[route]` table, a `[hold]` table, a `[spawn]` table, a `[jira]` table, a `[slack]` table, and a `[cleanup]` table. Default branches are not in the file. The spawner reads them from GitHub at run time.
+The file is `<config>/policy.toml`. `policy.example.toml` documents each key. It has a `[factory]` table, a `[skills]` table, one `[projects.<KEY>]` table per project, a `[route]` table, a `[hold]` table, a `[spawn]` table, a `[jira]` table, a `[slack]` table, and a `[cleanup]` table. Default branches are not in the file. The spawner reads them from GitHub or from git at run time.
 
-`config.policy()` is the only reader of the file. It fills every default and checks the required keys: one `[projects.<KEY>]` table with `repo`, `github`, `admit`, and `start.skill`, the `[jira]` keys, and the `[slack]` keys when `[slack]` exists. A missing key stops `install.py`, `daemon.py --once`, and each command with one line, for example `policy.toml: [jira] needs token_file`. No module repeats a default.
+`config.policy()` is the only reader of the file. It fills every default and checks the required keys: one `[projects.<KEY>]` table with `repo` and `start.skill` (`github` and `admit` are optional), the `[jira]` keys when `jira` is a Source, and the `[slack]` keys when `[slack]` exists. A missing key stops `install.py`, `daemon.py --once`, and each command with one line, for example `policy.toml: [jira] needs token_file`. No module repeats a default.
 
 Timers live in the `cursors` table. `registry.due(name)` and `registry.wait(name, delta)` read and set them, for example `github:next`, `relay:next`, and `spawn:last`.
 
@@ -364,7 +364,7 @@ Timers live in the `cursors` table. `registry.due(name)` and `registry.wait(name
 - `metadata_source`: the source of the pane tokens. Default `techichi`.
 - `inbox_ref`: the `inbox` Ref of the planner. Default `operator`.
 
-`[skills]` holds the skill names for `worker`, `planner`, and `relay`, and an optional `extra` folder. `install.py skills` renders each core template in `skills/` into `<config>/skills/<name>/SKILL.md`. It fills in `{factory}` (the core path) and `{home}` (the config path), sets the name, and appends `<extra>/<role>.md`. It links the worker and the planner skill into `~/.claude/skills`. The relay gets its file by path.
+`[skills]` holds the skill names for `worker`, `planner`, and `relay`, and an optional `extra` folder. `install.py skills` renders each core template in `skills/` into `<config>/skills/<name>/SKILL.md`. It fills in `{factory}` (the core path) and `{home}` (the config path), sets the name, and appends `<extra>/<role>.md`. For a harness with `skills = link` (Claude Code), it links the worker and the planner skill into `~/.claude/skills`. Pi gets the folder with `--skill`. The relay gets its file by path.
 
 ## Layout
 

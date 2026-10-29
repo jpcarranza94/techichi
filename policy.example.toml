@@ -1,12 +1,12 @@
 # Factory policy. Data only. Copy it to ~/.config/techichi/policy.toml and edit it. See DESIGN.md.
-# Default branches are not here. The spawner reads them from GitHub at run time.
+# Default branches are not here. The spawner reads them from GitHub, or from the HEAD of origin, at run time.
 
 [factory]
 herdr_session   = "default"                     # the herdr session that the factory owns. Hooks act only there.
 harness         = "claude"                      # the coding agent: claude or pi. A project can set its own.
-# sources       = ["github", "jira", "slack"]   # the default: github, plus jira and slack when their tables exist
-worktrees       = "~/code/worktrees"            # one worktree per ticket. Claude Code must trust this folder.
-helper_cwd      = "~/code"                      # the planner's cwd. Claude Code must trust this folder.
+# sources       = ["github", "jira", "slack"]   # the default: github if a project has github, plus jira and slack when their tables exist
+worktrees       = "~/code/worktrees"            # one worktree per ticket. The coding agent must trust this folder.
+helper_cwd      = "~/code"                      # the planner's cwd. The coding agent must trust this folder.
 # relay_cwd     = "~/.config/techichi/relay"  # empty on purpose. The default is shown.
 # metadata_source = "techichi"             # the herdr pane token source
 # inbox_ref     = "operator"                    # the Ref of DMs and mentions that go to the planner
@@ -19,9 +19,10 @@ relay   = "techichi-relay"
 # extra = "skills-extra"                        # a folder in the config dir with worker.md, planner.md, relay.md to append
 
 # One table per project. The key is the ticket key prefix, for example the Jira project key.
+# Required: repo and start. Optional: github, admit, setup, harness.
 [projects.APP]
 repo   = "~/code/app"                           # the main checkout
-github = "acme/app"
+github = "acme/app"                             # owner/name on GitHub. Remove it for another git host.
 setup  = []                                     # shell commands to run in a new worktree, for example "npm ci"
 # harness = "pi"                                # this project's coding agent, if not [factory] harness
 admit  = "project = APP AND sprint in openSprints() AND assignee = currentUser() AND status = 'To Do'"  # Jira only
@@ -37,7 +38,7 @@ start  = { skill = "ship-ticket", checkpoint = true }
 
 # Extra start arguments for one harness, for example the model of Pi.
 # [harness.pi]
-# args = ["--model", "deepseek/deepseek-chat"]
+# args = ["--model", "deepseek/deepseek-chat", "--skill", "~/skills/ship-ticket"]  # the model and your start skill
 
 # A command Source: any program that prints Events, one JSON object per line. See command_source.py.
 # Add its name to [factory] sources.
@@ -55,8 +56,8 @@ inbox  = ["planner"]
 notify_after_minutes = 60
 
 [spawn]
-max_active  = 3   # spawned workers at the same time. Each one is a full Claude Code session.
-gap_seconds = 30  # between two Claude starts. Simultaneous starts can race on Claude's own config files.
+max_active  = 3   # spawned workers at the same time. Each one is a full coding agent session.
+gap_seconds = 30  # between two agent starts. Simultaneous starts can race on the config files of the agent.
 
 # Remove this table to run without Jira.
 [jira]

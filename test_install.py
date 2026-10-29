@@ -1,10 +1,11 @@
-"""Check for the install on macOS and Linux: the service file, and a fresh install with no Jira and a fake herdr.
+"""Check for the install on macOS and Linux: the service file, and a fresh install with no Jira, no GitHub, and a fake herdr.
 The daemon must do a pass and write no file outside its config folder. Run: python3 test_install.py"""
 import testenv  # noqa: F401  (first: a temp config folder)
 import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import socketserver
 import subprocess
@@ -36,18 +37,19 @@ if sys.platform.startswith("linux") and shutil.which("systemd-analyze"):
     r = subprocess.run(["systemd-analyze", "--user", "verify", str(unit)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
 
-# --- A fresh install: a temp HOME, a policy with GitHub and one command Source, no Jira, no Slack ---
+# --- A fresh install: a temp HOME, a policy with one command Source, no GitHub, no gh, no Jira, no Slack ---
 home = Path(tempfile.mkdtemp(dir="/tmp" if os.path.isdir("/tmp") else None)).resolve()  # a short socket path
 cfg = home / ".config/techichi"
 cfg.mkdir(parents=True)
 policy = (CORE / "policy.example.toml").read_text()
 policy = policy[:policy.index("[jira]")] + policy[policy.index("[cleanup]"):]  # the README: remove what you do not use
 cmd = [sys.executable, "-c", "print('{\"id\": \"e1\", \"kind\": \"ticket\", \"ref\": \"APP-1\", \"payload\": {}}')"]
-policy = policy.replace("[factory]\n", "[factory]\nsources = [\"github\", \"tickets\"]\n", 1)
+policy = re.sub(r"(?m)^github .*\n", "", policy)  # the projects are on another git host
+policy = policy.replace("[factory]\n", "[factory]\nsources = [\"tickets\"]\n", 1)
 policy += f"\n[sources.tickets]\ncommand = {json.dumps(cmd)}\n"
 (cfg / "policy.toml").write_text(policy)
 env = {k: v for k, v in os.environ.items() if k not in ("TECHICHI_HOME", "CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME")}
-env.update(HOME=str(home))
+env.update(HOME=str(home), TECHICHI_GH="/nonexistent/gh")  # gh is not installed
 (home / ".claude").mkdir()
 r = subprocess.run([sys.executable, CORE / "install.py"], env=env, capture_output=True, text=True)
 assert r.returncode == 0, r.stderr
