@@ -284,7 +284,7 @@ A test session proved it. Arbitrary Bash, chained commands, redirects, a heredoc
 
 - `factory.py claim REF [--session PANE|NAME|UUID]`: link a Session to a Ref with `created_by = claim`. REF is a ticket key of a policy project, a PR URL of a policy repo, or a Slack permalink, stored as `<channel>:<thread_ts or ts>`. Anything else is rejected. The default Session is the caller's pane. A missing Session row is inserted from the herdr agent record. The next Router pass delivers the `unrouted` Events of that Ref, and an admitted ticket with a Link does not spawn. There is no `unclaim`.
 - `factory.py status`: read only. The Sessions that are not `ended`, with role, agent name or pane, state, agent status, ticket, PRs, and held count. The slots in use against `max_active`. The waiting admitted tickets with their reasons. The unrouted Events by kind. The last write of each Source cursor. The planner and the relay.
-- `factory.py cleanup KEY`: run the cleanup Action for each worker Session on that ticket, a hand-started one too. It skips the Jira, PR, and idle checks, and it keeps the clean-worktree check. There is no `--force`.
+- `factory.py cleanup KEY`: run the cleanup Action for each worker Session on that ticket, a hand-started one too. It skips the Jira, PR, and idle checks, and it keeps the clean-worktree check. There is no `--force`. It also works for a `gone` Session whose workspace is closed.
 
 ## Cleanup
 
@@ -303,11 +303,22 @@ Two guards come first. Each one stops the Action with one log line:
 The cleanup Action stops at the first failure and writes one log line:
 
 1. Remove the clean git worktrees in the Session's scratchpad folder, `/private/tmp/claude-<uid>/<cwd slug>/<session_id>/`.
-2. Run `herdr worktree remove --workspace <id>`, never with `--force`. It also closes the workspace. If the workspace stays, the Action closes it.
+2. If the workspace is open, run `herdr worktree remove --workspace <id>`, never with `--force`. It also closes the workspace. If the workspace stays, the Action closes it. If the workspace is closed, run `git worktree remove <cwd>` in the main checkout, never with `--force`.
 3. Run `git branch -d <branch>` in the main checkout. Never `-D`, and never a remote branch.
 4. Set the Session `ended`, with one log line that names the ticket.
 
 The same check sets a Session that has been `gone` for more than 24 hours to `ended`.
+
+### A workspace closed by hand
+
+When the operator closes the workspace of a spawned worker, the daemon runs the cleanup Action for it at once, with no Jira, PR, or idle check. The guards and the clean-worktree check stay, so a dirty checkout or a local-only commit stops the Action with one log line, and nothing is lost.
+
+A herdr restart can hide every agent until a client attaches. So the Action runs only when both are true:
+
+- The Session was `gone` before this pass and is still `gone` after it: two passes in a row.
+- Its workspace id is not in `herdr workspace list`. herdr restores workspaces with their ids, so a restored workspace counts as open.
+
+Each Session gets one try. The cursor `closed:<session_id>` records it. After a stop, fix the checkout and run `factory.py cleanup KEY`.
 
 ## Policy
 

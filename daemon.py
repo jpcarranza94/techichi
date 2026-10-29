@@ -264,6 +264,7 @@ def apply_tokens(con):
 
 
 def resync(con, pol, tokens=False):
+    gone = {r[0] for r in con.execute("SELECT session_id FROM sessions WHERE state = 'gone'")}
     sync(con, herdr.snapshot())
     if tokens:
         apply_tokens(con)
@@ -280,6 +281,7 @@ def resync(con, pol, tokens=False):
     except Exception as e:  # the relay clock must never cause a herdr reconnect
         log("relay failed:", str(e)[:300])
     try:
+        factory.cleanup_closed(con, pol, gone)  # gone in the last pass and still gone now
         factory.auto_cleanup(con, pol)  # at most every 10 minutes
     except Exception as e:  # the cleanup check must never cause a herdr reconnect
         log("cleanup failed:", str(e)[:300])

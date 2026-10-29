@@ -216,21 +216,49 @@ def cleanup_action(con, pol, s):
         r = git("worktree", "remove", wt, cwd=repo)
         if r.returncode:
             return stop(f"git worktree remove {wt}: {r.stderr.strip()[:200]}")
-    if s["workspace_id"]:  # 2. never --force
-        try:
+    try:  # 2. never --force
+        if s["workspace_id"] and s["workspace_id"] in open_workspaces():
             herdr.worktree_remove(s["workspace_id"])
-            if any(w["workspace_id"] == s["workspace_id"] for w in herdr.workspaces()):
+            if s["workspace_id"] in open_workspaces():
                 herdr.workspace_close(s["workspace_id"])
-        except Exception as e:
-            return stop(f"herdr: {e}")
+        else:  # the operator closed the workspace by hand. The checkout stays, so git removes it.
+            r = git("worktree", "remove", s["cwd"], cwd=repo)
+            if r.returncode:
+                return stop(f"git worktree remove {s['cwd']}: {r.stderr.strip()[:200]}")
+    except Exception as e:
+        return stop(f"herdr: {e}")
     if s["branch"]:  # 3. never -D, never a remote branch
         r = git("branch", "-d", s["branch"], cwd=repo)
         if r.returncode and "not found" not in r.stderr:
             return stop(f"git branch -d {s['branch']}: {r.stderr.strip()[:200]}")
     con.execute(f"UPDATE sessions SET state = 'ended', ended_at = {NOW} WHERE session_id = ?", (s["session_id"],))  # 4.
     registry.drop_cursor(con, f"cleanup:{s['session_id']}")
+    registry.drop_cursor(con, f"closed:{s['session_id']}")
     log(f"cleanup of {ticket}: Session {s['session_id'][:8]} ended, checkout, workspace and branch removed")
     return True
+
+
+def open_workspaces():
+    return {w["workspace_id"] for w in herdr.workspaces()}
+
+
+def cleanup_closed(con, pol, gone_before):
+    """A spawned worker whose workspace the operator closed by hand. A herdr restart can hide every agent for a
+    while, so the Session must be gone in two passes in a row (gone_before) and its workspace absent from herdr.
+    herdr restores workspaces with their ids, so a restored workspace counts as open. One try for each Session:
+    a stop writes one log line, and factory.py cleanup KEY can try again."""
+    rows = [s for s in con.execute("SELECT DISTINCT s.* FROM sessions s JOIN links l USING (session_id) WHERE s.role IN "
+                                   "('worker','coordinator') AND s.state = 'gone' AND l.kind = 'ticket' "
+                                   "AND l.created_by = 'spawner'").fetchall()
+            if s["session_id"] in gone_before and s["workspace_id"] and not registry.cursor(con, f"closed:{s['session_id']}")]
+    if not rows:
+        return
+    ws = open_workspaces()
+    for s in rows:
+        if s["workspace_id"] not in ws:
+            registry.set_cursor(con, f"closed:{s['session_id']}", registry.now())
+            log(f"workspace {s['workspace_id']} of {s['session_id'][:8]} is closed, cleanup starts")
+            cleanup_action(con, pol, s)
 
 
 def auto_cleanup(con, pol, now=None):

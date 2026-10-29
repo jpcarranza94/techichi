@@ -153,8 +153,9 @@ def fake_git(*args, cwd=None):
 f.git = fake_git
 herdr.run = lambda *a: (steps.append(("herdr",) + a), fake_herdr(*a))[1]
 assert f.cleanup_action(con, pol, s())
-assert [x[:3] for x in steps if x[1:3] != ("agent", "list")] == [("git", "worktree", "remove"), ("herdr", "worktree", "remove"),
-                                  ("herdr", "workspace", "list"), ("herdr", "workspace", "close"), ("git", "branch", "-d")]
+assert [x[:3] for x in steps if x[1:3] != ("agent", "list")] == [("git", "worktree", "remove"), ("herdr", "workspace", "list"),
+                                  ("herdr", "worktree", "remove"), ("herdr", "workspace", "list"), ("herdr", "workspace", "close"),
+                                  ("git", "branch", "-d")]
 assert steps[-1][3] == "APP-1325-x" and s()["state"] == "ended" and clock() is None
 # When worktree remove closes the workspace, no close follows.
 con.execute("UPDATE sessions SET state = 'live' WHERE session_id = ?", (W,))
@@ -181,6 +182,7 @@ AGENTS.append({"name": "app-1325", "pane_id": "wR:p1", "workspace_id": "wR", "ag
 steps.clear()
 assert not f.cleanup_action(con, pol, s()) and [x[1:3] for x in steps] == [("agent", "list")] and s()["state"] == "live"
 AGENTS.pop(-2)  # only the Session itself is left in wR: no stop
+WORKSPACES.add("wR")  # the workspace is open, so herdr removes the checkout
 steps.clear()
 assert f.cleanup_action(con, pol, s()) and ("herdr", "worktree", "remove", "--workspace", "wR") in steps
 con.execute("UPDATE sessions SET state = 'live' WHERE session_id = ?", (W,))
@@ -189,6 +191,40 @@ f.git = lambda *a, cwd=None: (steps.append(("git",) + a), R(out="/r/.git/worktre
                               else R(1, err="error: the branch is not fully merged") if a[0] == "branch" else R())[1]
 assert not f.cleanup_action(con, pol, s()) and s()["state"] == "live"
 f.git = fake_git
+
+# --- a workspace closed by hand: gone in two passes in a row, and the workspace absent from herdr ---
+logs = []
+f.log = lambda *a: logs.append(" ".join(map(str, a)))
+con.execute("UPDATE sessions SET state = 'gone' WHERE session_id = ?", (W,))
+WORKSPACES, REMOVE_CLOSES = set(), False
+steps.clear()
+f.cleanup_closed(con, pol, set())  # gone in this pass only, as after a herdr restart: nothing
+assert steps == [] and s()["state"] == "gone"
+WORKSPACES.add("wR")
+f.cleanup_closed(con, pol, {W})  # gone twice, but herdr restored the workspace: nothing
+assert [x for x in steps if x[1:3] != ("workspace", "list")] == [] and s()["state"] == "gone"
+# A local commit stops the cleanup with one log line. The next pass does not try again.
+WORKSPACES.discard("wR")
+state["clean"] = False
+steps.clear()
+f.cleanup_closed(con, pol, {W})
+assert s()["state"] == "gone" and [x for x in steps if x[0] == "git"] == []
+assert any("stopped: worktree not clean or not pushed" in line for line in logs)
+steps.clear()
+f.cleanup_closed(con, pol, {W})
+assert steps == []
+# By hand after the fix: git removes the checkout, because the workspace is closed.
+state["clean"] = True
+steps.clear()
+assert f.cleanup_by_hand(con, pol, "APP-1325") and s()["state"] == "ended"
+assert ("git", "worktree", "remove", "/wt/APP-1325") in steps and ("herdr", "worktree", "remove") not in [x[:3] for x in steps]
+# A clean checkout: the daemon cleans up by itself.
+con.execute("UPDATE sessions SET state = 'gone' WHERE session_id = ?", (W,))
+steps.clear()
+f.cleanup_closed(con, pol, {W})
+assert s()["state"] == "ended" and ("git", "worktree", "remove", "/wt/APP-1325") in steps
+assert steps[-1][:4] == ("git", "branch", "-d", "APP-1325-x")
+con.execute("UPDATE sessions SET state = 'live' WHERE session_id = ?", (W,))
 
 # --- auto_cleanup: only spawned workers, at most every 10 minutes, and the 24-hour rule ---
 for sid, role, by in (("hand", "worker", "claim"), ("plan", "planner", None), ("rel", "relay", None)):
