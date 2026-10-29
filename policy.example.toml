@@ -1,0 +1,65 @@
+# Factory policy. Data only. Copy it to ~/.config/techichi/policy.toml and edit it. See DESIGN.md.
+# Default branches are not here. The spawner reads them from GitHub at run time.
+
+[factory]
+herdr_session   = "default"                     # the herdr session that the factory owns. Hooks act only there.
+worktrees       = "~/code/worktrees"            # one worktree per ticket. Claude Code must trust this folder.
+helper_cwd      = "~/code"                      # the planner's cwd. Claude Code must trust this folder.
+# relay_cwd     = "~/.config/techichi/relay"  # empty on purpose. The default is shown.
+# metadata_source = "techichi"             # the herdr pane token source
+# inbox_ref     = "operator"                    # the Ref of DMs and mentions that go to the planner
+
+[skills]
+# The names that prompts use. `install.py skills` renders the core templates with these names.
+worker  = "techichi-worker"
+planner = "techichi-planner"
+relay   = "techichi-relay"
+# extra = "skills-extra"                        # a folder in the config dir with worker.md, planner.md, relay.md to append
+
+# One table per Jira project. The key is the Jira project key.
+[projects.APP]
+repo   = "~/code/app"                           # the main checkout
+github = "acme/app"
+setup  = []                                     # shell commands to run in a new worktree, for example "npm ci"
+admit  = "project = APP AND sprint in openSprints() AND assignee = currentUser() AND status = 'To Do'"
+start  = { skill = "ship-ticket", checkpoint = true }  # the start skill. See README section "Start skill".
+# start = { skill = "ship-ticket", checkpoint = true, note = "Use handoff mode confirm." }  # note: extra prompt text
+
+[projects.WEB]
+repo   = "~/code/web"
+github = "acme/web"
+setup  = ["uv sync"]
+admit  = "project = WEB AND sprint in openSprints() AND assignee = currentUser() AND status = 'To Do'"
+start  = { skill = "ship-ticket", checkpoint = true }
+
+[route]
+ticket = ["coordinator", "worker"]
+pr     = ["worker", "coordinator"]
+slack  = ["worker", "coordinator"]
+inbox  = ["planner"]
+
+[hold]
+notify_after_minutes = 60
+
+[spawn]
+max_active  = 3   # spawned workers at the same time. Each one is a full Claude Code session.
+gap_seconds = 30  # between two Claude starts. Simultaneous starts can race on Claude's own config files.
+
+[jira]
+api        = "https://api.atlassian.com/ex/jira/<cloud-id>/rest/api/3"
+site       = "https://acme.atlassian.net"
+email      = "you@acme.example"
+token_file = "~/.config/techichi/jira-token"  # a scoped token: read:jira-work, read:jira-user
+
+# Remove this table to run without Slack. Then no relay starts.
+[slack]
+me               = "U0OPERATOR1"                  # your Slack user id. Own messages are skipped.
+channels         = ["C0APPCHAN1", "C0WEBCHAN2"]   # channel ids to read in full
+poll_minutes     = 5
+max_poll_minutes = 30   # while Slack is quiet, the interval doubles up to this
+hosts            = ["acme.slack.com"]             # permalink hosts that the searches return
+inbox            = false  # rule f: DMs and mentions to the planner
+
+[cleanup]
+# Jira status names, not the category. Some teams put "Ready for Deploy" in the done category.
+done_statuses = ["Done", "Won't Do"]

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The factory daemon. `install.py plist` fills in the paths. See DESIGN.md section "Daemon".
+  Install:
+    cp techichi.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/techichi.plist
+  Remove:
+    launchctl bootout gui/$(id -u)/techichi
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>techichi</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{python}</string>
+        <string>{core}/daemon.py</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TECHICHI_HOME</key>
+        <string>{home}</string>
+        <key>PATH</key>
+        <string>{path}</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>{home}</string>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>{home}/daemon.log</string>
+    <key>StandardErrorPath</key>
+    <string>{home}/daemon.log</string>
+</dict>
+</plist>
