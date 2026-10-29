@@ -1,5 +1,6 @@
 """Check for the sessions migration and plan.py. Scratch databases, a stub herdr. Run: python3 test_plan.py"""
 import testenv  # noqa: F401  (first: a temp config folder)
+import config  # noqa: E402
 import contextlib
 import io
 import os
@@ -13,7 +14,7 @@ import registry
 d = Path(tempfile.mkdtemp())
 
 # --- Migration: a database with the old role check gets the planner role. Rows and foreign keys survive. ---
-old = registry.HERE.joinpath("schema.sql").read_text().replace("'relay','planner'", "'relay'")
+old = config.HERE.joinpath("schema.sql").read_text().replace("'relay','planner'", "'relay'")
 db = d / "old.db"
 o = sqlite3.connect(db)
 o.executescript(old.split("-- The planner's order")[0])  # the old schema had no plan table
@@ -80,7 +81,7 @@ assert "WEB-7" in text and "hold" in text and "not in this sprint" in text
 stub = d / "herdr"
 stub.write_text('#!/bin/sh\necho \'{"result":{"agent":{"agent_session":{"value":"plan-sid"}}}}\'\n')
 stub.chmod(0o755)
-registry.HERDR = str(stub)
+config.HERDR = str(stub)
 os.environ["HERDR_PANE_ID"] = "wP:p1"
 with contextlib.redirect_stdout(io.StringIO()):
     plan.claim_role(con)

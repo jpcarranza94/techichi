@@ -17,8 +17,9 @@ import time
 from pathlib import Path
 from datetime import datetime, timezone
 
+import config
 import registry
-from github_source import cursor, set_cursor
+from registry import cursor, set_cursor
 
 OVERLAP = 600  # seconds. A late message still lands. Event ids deduplicate.
 TS = re.compile(r"\d{10}\.\d{6}")
@@ -167,7 +168,7 @@ def classify(con, pol, m, batch):
             return "e", root[0], root[1]
     if m["channel_type"] in ("im", "mpim") or f"<@{me}" in m["text"]:
         # Off by default: one day gave 36 inbox items, too many for the planner.
-        return ("f", "inbox", registry.factory(pol)["inbox_ref"]) if pol["slack"].get("inbox") else ("f", None, None)
+        return ("f", "inbox", pol["factory"]["inbox_ref"]) if pol["slack"]["inbox"] else ("f", None, None)
     return "g", None, None
 
 
@@ -216,7 +217,7 @@ if __name__ == "__main__":
     i.add_argument("--dry-run", action="store_true")
     i.add_argument("lines", nargs="*", help="JSON messages for a check by hand. Without lines: the transcript.")
     a = ap.parse_args()
-    con, pol = registry.connect(), registry.policy()
+    con, pol = registry.connect(), config.policy()
     if a.cmd == "window":
         print(json.dumps(window(con, pol), indent=1))
     else:

@@ -6,19 +6,18 @@
   factory.py cleanup KEY                            end the worker Session of a ticket and remove its checkout
 """
 import argparse
-import json
 import os
 import re
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import timedelta
 
+import config
+import herdr
 import registry
 
-NOW = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
-UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+NOW = registry.NOW
 IDLE_FOR = timedelta(minutes=60)
 EVERY = timedelta(minutes=10)
 
@@ -27,13 +26,8 @@ def log(*a):
     print(time.strftime("%Y-%m-%dT%H:%M:%S"), "factory:", *a, file=sys.stderr, flush=True)
 
 
-def herdr_json(*args):
-    import spawn
-    return spawn.herdr(*args)
-
-
 def git(*args, cwd=None):
-    return subprocess.run([registry.GIT, *(["-C", str(cwd)] if cwd else []), *args],
+    return subprocess.run([config.GIT, *(["-C", str(cwd)] if cwd else []), *args],
                           capture_output=True, text=True, timeout=60)
 
 
@@ -60,23 +54,13 @@ def parse_ref(pol, text):
     raise ValueError("REF must be a ticket key of a policy project, a PR URL of a policy repo, or a Slack permalink")
 
 
-def find_agent(target):
-    """The herdr agent record for a pane id, an agent name, or a Claude session UUID."""
-    if UUID.fullmatch(target):
-        for a in herdr_json("agent", "list")["agents"]:
-            if (a.get("agent_session") or {}).get("value") == target:
-                return a
-        raise ValueError(f"no herdr agent has session {target}")
-    return herdr_json("agent", "get", target)["agent"]
-
-
 def claim(con, pol, text, target=None):
     kind, ref = parse_ref(pol, text)
     target = target or os.environ.get("HERDR_PANE_ID")
     if not target:
         raise ValueError("no --session and no HERDR_PANE_ID: run it inside a herdr pane or name the session")
-    a = find_agent(target)
-    sid = (a.get("agent_session") or {}).get("value")
+    a = herdr.find_agent(target)
+    sid = herdr.session_id(a)
     if not sid:
         raise ValueError(f"herdr shows no Claude session in {a.get('pane_id')}")
     if not con.execute("SELECT 1 FROM sessions WHERE session_id = ?", (sid,)).fetchone():
@@ -94,7 +78,7 @@ def status(con, pol, names=None):
     out = []
     if names is None:
         try:
-            names = {(a.get("agent_session") or {}).get("value"): a.get("name") for a in herdr_json("agent", "list")["agents"]}
+            names = {herdr.session_id(a): a.get("name") for a in herdr.agents()}
         except Exception:
             names = {}
     rows = con.execute("SELECT * FROM sessions WHERE state != 'ended' ORDER BY role, created_at").fetchall()
@@ -107,10 +91,7 @@ def status(con, pol, names=None):
         who = names.get(s["session_id"]) or s["pane_id"] or "-"
         out.append(f"  {s['session_id'][:8]} {s['role']:<11} {who:<20} {s['state']:<10} {s['agent_status'] or '-':<8} "
                    f"ticket {tickets:<10} PR {prs:<10} held {held}")
-    cap = pol.get("spawn", {}).get("max_active", 0)
-    used = con.execute("SELECT count(DISTINCT s.session_id) FROM sessions s JOIN links l USING (session_id) "
-                       "WHERE l.kind = 'ticket' AND l.created_by = 'spawner' AND s.state IN ('registered','live')").fetchone()[0]
-    out.append(f"Slots: {used} of {cap} in use")
+    out.append(f"Slots: {registry.slots_used(con)} of {pol['spawn']['max_active']} in use")
     wait = con.execute("SELECT ref, reason FROM events WHERE kind = 'ticket' AND status = 'queued' "
                        "AND json_extract(payload, '$.admitted') ORDER BY created_at").fetchall()
     out.append(f"Waiting admitted tickets: {len(wait)}")
@@ -142,11 +123,11 @@ def jira_done(pol, key):
         if "HTTP 404" in str(e):
             return None
         raise
-    return f["status"]["name"] in pol.get("cleanup", {}).get("done_statuses", ["Done"])
+    return f["status"]["name"] in pol["cleanup"]["done_statuses"]
 
 
 def pr_closed(url):
-    r = subprocess.run([registry.GH, "pr", "view", url, "--json", "state", "-q", ".state"],
+    r = subprocess.run([config.GH, "pr", "view", url, "--json", "state", "-q", ".state"],
                        capture_output=True, text=True, timeout=60)
     return r.returncode == 0 and r.stdout.strip() in ("MERGED", "CLOSED")
 
@@ -163,7 +144,7 @@ def done(con, pol, s, now):
     key = f"cleanup:{s['session_id']}"
 
     def no(why):
-        con.execute("DELETE FROM cursors WHERE source = ?", (key,))
+        registry.drop_cursor(con, key)
         return False, why
 
     if s["agent_status"] not in ("idle", "done"):
@@ -184,11 +165,10 @@ def done(con, pol, s, now):
             return no(f"{p} open")
     if not s["cwd"] or not clean(s["cwd"]):
         return no("worktree not clean or not pushed")
-    first = con.execute("SELECT value FROM cursors WHERE source = ?", (key,)).fetchone()
-    if not first:
-        con.execute("INSERT INTO cursors (source, value, updated_at) VALUES (?, ?, ?)", (key, now, now))
+    if not registry.cursor(con, key):
+        registry.set_cursor(con, key, now)  # the first eligible time
         return False, "idle clock started"
-    if datetime.fromisoformat(now.replace("Z", "+00:00")) - datetime.fromisoformat(first[0].replace("Z", "+00:00")) < IDLE_FOR:
+    if not registry.due(con, key, IDLE_FOR, at=now):
         return False, "idle for less than 60 minutes"
     return True, ""
 
@@ -222,9 +202,8 @@ def cleanup_action(con, pol, s):
     # herdr worktree remove closes the whole workspace and kills every pane in it.
     if s["workspace_id"]:
         try:
-            others = [a.get("name") or a.get("pane_id") for a in herdr_json("agent", "list")["agents"]
-                      if a.get("workspace_id") == s["workspace_id"]
-                      and (a.get("agent_session") or {}).get("value") != s["session_id"]]
+            others = [a.get("name") or a.get("pane_id") for a in herdr.agents()
+                      if a.get("workspace_id") == s["workspace_id"] and herdr.session_id(a) != s["session_id"]]
         except Exception as e:
             return stop(f"herdr agent list: {e}")
         if others:
@@ -239,9 +218,9 @@ def cleanup_action(con, pol, s):
             return stop(f"git worktree remove {wt}: {r.stderr.strip()[:200]}")
     if s["workspace_id"]:  # 2. never --force
         try:
-            herdr_json("worktree", "remove", "--workspace", s["workspace_id"])
-            if any(w["workspace_id"] == s["workspace_id"] for w in herdr_json("workspace", "list")["workspaces"]):
-                herdr_json("workspace", "close", s["workspace_id"])
+            herdr.worktree_remove(s["workspace_id"])
+            if any(w["workspace_id"] == s["workspace_id"] for w in herdr.workspaces()):
+                herdr.workspace_close(s["workspace_id"])
         except Exception as e:
             return stop(f"herdr: {e}")
     if s["branch"]:  # 3. never -D, never a remote branch
@@ -249,19 +228,17 @@ def cleanup_action(con, pol, s):
         if r.returncode and "not found" not in r.stderr:
             return stop(f"git branch -d {s['branch']}: {r.stderr.strip()[:200]}")
     con.execute(f"UPDATE sessions SET state = 'ended', ended_at = {NOW} WHERE session_id = ?", (s["session_id"],))  # 4.
-    con.execute("DELETE FROM cursors WHERE source = ?", (f"cleanup:{s['session_id']}",))
+    registry.drop_cursor(con, f"cleanup:{s['session_id']}")
     log(f"cleanup of {ticket}: Session {s['session_id'][:8]} ended, checkout, workspace and branch removed")
     return True
 
 
 def auto_cleanup(con, pol, now=None):
     """The daemon's check, at most every 10 minutes. Only spawned workers. Also ends Sessions gone for 24 hours."""
-    import github_source
-    now = now or github_source.now()
-    last = github_source.cursor(con, "cleanup:last")
-    if last and datetime.fromisoformat(now.replace("Z", "+00:00")) - datetime.fromisoformat(last.replace("Z", "+00:00")) < EVERY:
+    now = now or registry.now()
+    if not registry.due(con, "cleanup:last", EVERY, at=now):
         return
-    github_source.set_cursor(con, "cleanup:last", now)
+    registry.set_cursor(con, "cleanup:last", now)
     con.execute(f"UPDATE sessions SET state = 'ended', ended_at = {NOW} WHERE state = 'gone' "
                 "AND coalesce(last_seen, created_at) < strftime('%Y-%m-%dT%H:%M:%SZ', ?, '-24 hours')", (now,))
     for s in con.execute("SELECT DISTINCT s.* FROM sessions s JOIN links l USING (session_id) WHERE s.role IN "
@@ -294,7 +271,7 @@ def main(argv=None):
     k = sub.add_parser("cleanup")
     k.add_argument("key")
     a = ap.parse_args(argv)
-    con, pol = registry.connect(), registry.policy()
+    con, pol = registry.connect(), config.policy()
     try:
         if a.cmd == "claim":
             kind, ref, sid, who = claim(con, pol, a.ref, a.session)

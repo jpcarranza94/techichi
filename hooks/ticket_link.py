@@ -5,12 +5,13 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+import config
 import registry
 
 
 def record(con, data):
     inp = data.get("tool_input") or {}
-    starts = {p.get("start", {}).get("skill") for p in registry.policy()["projects"].values()}
+    starts = {p["start"]["skill"] for p in config.policy()["projects"].values()}
     if inp.get("skill", "").split(":")[-1] not in starts:
         return
     for key in dict.fromkeys(re.findall(r"\b[A-Z][A-Z0-9]+-\d+\b", str(inp.get("args", "")))):

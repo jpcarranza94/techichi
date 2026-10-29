@@ -1,6 +1,8 @@
 """Check for factory.py claim, status and cleanup. Scratch databases, stubs for herdr, git, Jira and gh.
 Run: python3 test_factory.py"""
 import testenv  # noqa: F401  (first: a temp config folder)
+import herdr  # noqa: E402
+import config  # noqa: E402
 import os
 import tempfile
 from pathlib import Path
@@ -8,7 +10,7 @@ from pathlib import Path
 import factory as f
 import registry
 
-pol = registry.policy()
+pol = config.policy()
 con = registry.connect(Path(tempfile.mkdtemp(), "r.db"))
 SID, SID2 = "11111111-2222-3333-4444-555555555555", "66666666-7777-8888-9999-000000000000"
 
@@ -57,7 +59,7 @@ def fake_herdr(*args):
     return {}
 
 
-f.herdr_json = fake_herdr
+herdr.run = fake_herdr
 os.environ["HERDR_PANE_ID"] = "w4:p5"
 con.execute("INSERT INTO events (id, source, kind, ref, payload, status, reason) VALUES "
             "('j1', 'jira', 'ticket', 'WEB-690', '{\"admitted\": true}', 'queued', 'needs-decision: branch WEB-690-x')")
@@ -149,7 +151,7 @@ def fake_git(*args, cwd=None):
 
 
 f.git = fake_git
-f.herdr_json = lambda *a: (steps.append(("herdr",) + a), fake_herdr(*a))[1]
+herdr.run = lambda *a: (steps.append(("herdr",) + a), fake_herdr(*a))[1]
 assert f.cleanup_action(con, pol, s())
 assert [x[:3] for x in steps if x[1:3] != ("agent", "list")] == [("git", "worktree", "remove"), ("herdr", "worktree", "remove"),
                                   ("herdr", "workspace", "list"), ("herdr", "workspace", "close"), ("git", "branch", "-d")]

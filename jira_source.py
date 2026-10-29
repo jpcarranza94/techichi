@@ -11,11 +11,11 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
+import config
 import registry
-from github_source import cursor, iso, now, set_cursor
+from registry import cursor, iso, now, set_cursor  # noqa: F401  (the Source tests use them)
 
 OVERLAP = timedelta(minutes=10)
-FMT = "%Y-%m-%dT%H:%M:%SZ"
 _auth, _me = None, None
 
 
@@ -82,7 +82,7 @@ def updates(con, pol, last, start):
                                              "WHERE l.kind = 'ticket' AND s.state != 'ended'")}
     if not keys:
         return []
-    since = datetime.strptime(last, FMT).replace(tzinfo=timezone.utc) - OVERLAP
+    since = registry.parse(last) - OVERLAP
     minutes = math.ceil((start - since).total_seconds() / 60)
     # Relative JQL avoids the Jira time zone of the token owner. The search names projects, not the linked keys:
     # one deleted or bogus key in `key in (...)` can fail the whole search and stop admission too.
@@ -119,11 +119,11 @@ def updates(con, pol, last, start):
 
 def poll(con, pol, dry_run=False):
     """Insert Events for admissions and updates. Return the count. dry_run prints and writes nothing."""
-    if not dry_run and (cursor(con, "jira:next") or "") > now():
+    if not dry_run and not registry.due(con, "jira:next"):
         return 0
     start = datetime.now(timezone.utc)
     if not dry_run:
-        set_cursor(con, "jira:next", now(timedelta(seconds=60)))  # a failed request also waits
+        registry.wait(con, "jira:next", timedelta(seconds=60))  # a failed request also waits
     last = cursor(con, "jira")
     evs = admissions(con, pol) + (updates(con, pol, last, start) if last else [])
     n = 0
@@ -146,7 +146,7 @@ if __name__ == "__main__":
     a = ap.parse_args()
     if a.since and not a.dry_run:
         ap.error("--since needs --dry-run")
-    con, pol = registry.connect(), registry.policy()
+    con, pol = registry.connect(), config.policy()
     if a.since:
         print(len([print(json.dumps(e)) for e in updates(con, pol, a.since, datetime.now(timezone.utc))]), "update events")
     print(poll(con, pol, dry_run=a.dry_run), "events")

@@ -1,5 +1,6 @@
 """Check for the Router, the batch delivery and the herdr sync. No herdr needed. Run: python3 test_daemon.py"""
 import testenv  # noqa: F401  (first: a temp config folder)
+import config  # noqa: E402
 import json
 import tempfile
 from pathlib import Path
@@ -8,7 +9,7 @@ import daemon
 import plan
 import registry
 
-pol = {**registry.policy(), "spawn": {"max_active": 2, "gap_seconds": 0}}  # its own cap, not the live policy
+pol = {**config.policy(), "spawn": {"max_active": 2, "gap_seconds": 0}}  # its own cap, not the live policy
 
 
 def never(*a):
@@ -258,13 +259,13 @@ admitted("a10", "WEB-10")
 con.execute("UPDATE sessions SET state = 'ended' WHERE session_id = 's-WEB-690'")
 pol["spawn"]["max_active"] = 0  # contention without a free slot
 run(spawner(got), prompt=never)
-assert json.loads(daemon.github_source.cursor(con, "planner:pending")) == ["WEB-10 (needs-plan)"]
+assert json.loads(registry.cursor(con, "planner:pending")) == ["WEB-10 (needs-plan)"]
 run(spawner(got), prompt=lambda pane, text: notes.append(text))
 assert len(notes) == 1  # still inside the 5 minutes
 con.execute("DELETE FROM cursors WHERE source = 'planner:next'")
 run(spawner(got), prompt=lambda pane, text: notes.append(text))
 assert len(notes) == 2 and "WEB-10 (needs-plan)" in notes[1]
-assert daemon.github_source.cursor(con, "planner:pending") == "[]"
+assert registry.cursor(con, "planner:pending") == "[]"
 
 # A stuck planner: registered for over 10 minutes means its start failed. It ends, and a new planner starts.
 con.execute("UPDATE sessions SET state = 'ended' WHERE role = 'planner'")

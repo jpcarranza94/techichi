@@ -4,9 +4,11 @@ import argparse
 import json
 import re
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
+import config
 import registry
+from registry import cursor, iso, now, set_cursor  # noqa: F401  (the Source tests use them)
 
 OVERLAP = timedelta(minutes=10)  # GitHub can list a notification after a newer one. Ids deduplicate.
 PER_PAGE = 50  # the GitHub maximum for notifications
@@ -16,7 +18,7 @@ PER_ACTIVITY_PAGE = 100
 
 def gh(path, headers=False):
     """GET through gh. With headers=True, return (headers dict, body)."""
-    out = subprocess.run([registry.GH, "api", *(["-i"] if headers else []), path],
+    out = subprocess.run([config.GH, "api", *(["-i"] if headers else []), path],
                          capture_output=True, text=True, timeout=30, check=True).stdout
     if not headers:
         return json.loads(out)
@@ -27,7 +29,7 @@ def gh(path, headers=False):
 
 def gh_all(path):
     """GET every page through gh. The activity lists come oldest first, so the newest items sit on the last page."""
-    out = subprocess.run([registry.GH, "api", "--paginate", "--slurp", path],
+    out = subprocess.run([config.GH, "api", "--paginate", "--slurp", path],
                          capture_output=True, text=True, timeout=60, check=True).stdout
     return [item for page in json.loads(out) for item in page]
 
@@ -86,37 +88,18 @@ def activities(note, since, fetch=gh_all, login=me):
     return out
 
 
-def iso(t):
-    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def now(delta=timedelta()):
-    return iso(datetime.now(timezone.utc) + delta)
-
-
-def cursor(con, source):
-    r = con.execute("SELECT value FROM cursors WHERE source = ?", (source,)).fetchone()
-    return r["value"] if r else None
-
-
-def set_cursor(con, source, value):
-    con.execute("INSERT INTO cursors (source, value, updated_at) VALUES (?, ?, ?) "
-                "ON CONFLICT (source) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-                (source, value, now()))
-
-
 def poll(con, pol, dry_run=False, since=None, fetch=gh_all, login=me, list_fn=None):
     """Insert Events for new PR notifications. Return the count. dry_run prints and writes nothing."""
-    if not dry_run and (cursor(con, "github:next") or "") > now():
+    if not dry_run and not registry.due(con, "github:next"):
         return 0
     last = cursor(con, "github")
     if not since and not last:
         if not dry_run:
             set_cursor(con, "github", now())  # first run: start from now, never flood live sessions
         return 0
-    since = since or iso(datetime.strptime(last, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc) - OVERLAP)
+    since = since or iso(registry.parse(last) - OVERLAP)
     if not dry_run:
-        set_cursor(con, "github:next", now(timedelta(seconds=60)))  # a failed request also waits
+        registry.wait(con, "github:next", timedelta(seconds=60))  # a failed request also waits
     list_fn = list_fn or (lambda p: gh(p, headers=True))
     hdrs, notes, page = {}, [], 1
     while True:  # newest first. Read pages until a short page.
@@ -141,7 +124,7 @@ def poll(con, pol, dry_run=False, since=None, fetch=gh_all, login=me, list_fn=No
         return n
     if notes:  # the overlap returns older notes too, so the cursor never moves back
         set_cursor(con, "github", max([last or ""] + [x["updated_at"] for x in notes]))
-    set_cursor(con, "github:next", now(timedelta(seconds=int(hdrs.get("x-poll-interval", "60")))))
+    registry.wait(con, "github:next", timedelta(seconds=int(hdrs.get("x-poll-interval", "60"))))
     return n
 
 
@@ -152,4 +135,4 @@ if __name__ == "__main__":
     a = ap.parse_args()
     if a.since and not a.dry_run:
         ap.error("--since needs --dry-run")
-    print(poll(registry.connect(), registry.policy(), dry_run=a.dry_run, since=a.since), "events")
+    print(poll(registry.connect(), config.policy(), dry_run=a.dry_run, since=a.since), "events")

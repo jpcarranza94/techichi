@@ -1,5 +1,7 @@
 """Offline check for spawn.py: .worktreeinclude copy, first prompt, registry schema. Run: python3 test_spawn.py"""
 import testenv  # noqa: F401  (first: a temp config folder)
+import herdr  # noqa: E402
+import config  # noqa: E402
 import subprocess
 import tempfile
 from pathlib import Path
@@ -24,9 +26,10 @@ with tempfile.TemporaryDirectory() as d:
     assert con.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert con.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
 
-p = spawn.first_prompt("APP-1", {"skill": "ship-ticket", "checkpoint": True, "note": "Use handoff mode confirm."})
+pol = config.policy()
+p = spawn.first_prompt("APP-1", {"skill": "ship-ticket", "checkpoint": True, "note": "Use handoff mode confirm."}, pol)
 assert "techichi-worker" in p and "ship-ticket" in p and "checkpoint on" in p and "confirm. The branch for APP-1" in p
-assert "handoff" not in spawn.first_prompt("APP-1", {"skill": "ship-ticket"})
+assert "handoff" not in spawn.first_prompt("APP-1", {"skill": "ship-ticket"}, pol)
 
 # A stub herdr: an error reply with exit code 0, then readiness on the second agent get.
 with tempfile.TemporaryDirectory() as d:
@@ -39,14 +42,14 @@ case "$3 $4" in
 esac
 """)
     stub.chmod(0o755)
-    registry.HERDR = str(stub)
+    config.HERDR = str(stub)
     try:
-        spawn.herdr("agent", "start", "x")
+        herdr.run("agent", "start", "x")
         raise AssertionError("no HerdrError")
-    except spawn.HerdrError as e:
+    except herdr.HerdrError as e:
         assert e.code == "agent_not_ready"
-    spawn.time.sleep = lambda s: None
-    assert spawn.wait_ready("wX:p1", timeout=5)
+    herdr.time.sleep = lambda s: None
+    assert herdr.wait_ready("wX:p1", timeout=5)
 
 # A stub herdr: no shell pid on the first process-info, agent_pane_busy on the first agent start.
 # The real herdr writes that error to stderr and exits 1.
@@ -63,8 +66,8 @@ case "$3 $4" in
 esac
 """)
     stub.chmod(0o755)
-    registry.HERDR = str(stub)
-    spawn.start_agent("app-1", "wX:p1", "sid", timeout=5)
+    config.HERDR = str(stub)
+    herdr.start_agent("app-1", "wX:p1", "sid", timeout=5)
     assert Path(d, "shell").exists() and len(Path(d, "starts").read_text().split()) == 2
 # Pre-check: branches and open PRs that name the key. APP-12 does not match APP-123.
 assert spawn.key_in("APP-12", "app-12-fix") and spawn.key_in("APP-12", "feature/APP-12") and not spawn.key_in("APP-12", "APP-123")
@@ -80,7 +83,7 @@ assert spawn.existing_work("APP-12", p) == ["branch APP-12-old-try", "branch app
 # spawn() raises ExistingWork before any row. A plan row with hold = 0 skips the pre-check.
 with tempfile.TemporaryDirectory() as d:
     db = Path(d, "r.db")
-    pol = {"projects": {"APP": p}}
+    pol = {**config.policy(), "projects": {"APP": p}}
     try:
         spawn.spawn("APP-12", pol=pol, db=db)
         raise AssertionError("no ExistingWork")
@@ -101,7 +104,7 @@ import contextlib, io, re, install  # noqa: E401,E402
 with contextlib.redirect_stdout(io.StringIO()):
     install.skills()
 args = spawn.relay_args()
-script = registry.HERE / "slack_source.py"
+script = config.HERE / "slack_source.py"
 for flag in ("--restricted", "--model", "--tools", "--permission-mode", "--settings", "--append-system-prompt-file"):
     assert flag in args
 assert args[args.index("--model") + 1] == "haiku"  # mechanical work, Op chose Haiku on 2026-10-28
@@ -117,7 +120,7 @@ assert not any("\n" in a for a in args)  # herdr: "agent arguments cannot be enc
 assert "herdr-agent-state.sh session" in args[args.index("--settings") + 1]
 
 # Helpers share one workspace "factory", one tab each. A failed start closes only its tab.
-calls, real_herdr, real_start = [], spawn.herdr, spawn.start_agent
+calls, real_run, real_start = [], herdr.run, herdr.start_agent
 def fake_herdr(*a, existing=None):
     calls.append(a)
     if a[:2] == ("workspace", "list"):
@@ -127,24 +130,24 @@ def fake_herdr(*a, existing=None):
     if a[:2] == ("workspace", "create"):
         return {"root_pane": {"pane_id": "w20:p1", "workspace_id": "w20", "tab_id": "w20:t1"}}
     return {}
-spawn.herdr = fake_herdr
+herdr.run = fake_herdr
 fake_herdr.existing = True
-assert spawn.helper_tab("relay", "/tmp/r") == ("w14:p3", "w14", "w14:t3")
+assert herdr.helper_tab("relay", "/tmp/r") == ("w14:p3", "w14", "w14:t3")
 assert calls[-1] == ("tab", "create", "--workspace", "w14", "--cwd", "/tmp/r", "--label", "relay", "--no-focus")
 fake_herdr.existing, calls[:] = False, []
-assert spawn.helper_tab("planner", "/tmp/p") == ("w20:p1", "w20", "w20:t1")
+assert herdr.helper_tab("planner", "/tmp/p") == ("w20:p1", "w20", "w20:t1")
 assert calls[1][:5] == ("workspace", "create", "--cwd", "/tmp/p", "--label") and calls[1][5] == "factory"
 assert calls[2] == ("tab", "rename", "w20:t1", "planner")
 fake_herdr.existing, calls[:] = True, []
 def failing_start(*a, **k):
     raise RuntimeError("agent start failed")
-spawn.start_agent = failing_start
+herdr.start_agent = failing_start
 try:
     spawn.spawn_helper("relay", tempfile.mkdtemp(), (), "x", db=Path(tempfile.mkdtemp(), "h.db"))
     raise AssertionError("spawn_helper must raise")
 except RuntimeError:
     pass
 assert ("tab", "close", "w14:t3") in calls and not any(c[:2] == ("workspace", "close") for c in calls)
-spawn.herdr, spawn.start_agent = real_herdr, real_start
+herdr.run, herdr.start_agent = real_run, real_start
 
 print("ok")

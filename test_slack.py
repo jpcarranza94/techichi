@@ -1,5 +1,6 @@
 """Check for the Slack Source with fixture messages. No Slack. Run: python3 test_slack.py"""
 import testenv  # noqa: F401  (first: a temp config folder)
+import config  # noqa: E402
 import contextlib
 import io
 import json
@@ -12,7 +13,7 @@ from pathlib import Path
 import registry
 import slack_source as s
 
-pol = registry.policy()
+pol = config.policy()
 assert pol["slack"]["inbox"] is False  # the live default: rule f skips
 pol["slack"] = {**pol["slack"], "inbox": True}  # the fixtures test rule f with the inbox on
 con = registry.connect(Path(tempfile.mkdtemp(), "r.db"))

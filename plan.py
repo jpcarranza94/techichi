@@ -3,9 +3,10 @@
 import argparse
 import json
 import os
-import subprocess
 import sys
 
+import config
+import herdr
 import registry
 
 NOW = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
@@ -16,11 +17,8 @@ def by():
 
 
 def show(con, pol):
-    cap = pol.get("spawn", {}).get("max_active", 0)
-    active = con.execute("SELECT count(DISTINCT s.session_id) FROM sessions s JOIN links l USING (session_id) "
-                         "WHERE l.kind = 'ticket' AND l.created_by = 'spawner' "
-                         "AND s.state IN ('registered','live')").fetchone()[0]
-    print(f"Spawned workers: {active} active of {cap}.")
+    cap = pol["spawn"]["max_active"]
+    print(f"Spawned workers: {registry.slots_used(con)} active of {cap}.")
     waiting = con.execute("SELECT e.ref, e.reason, e.created_at, e.payload, p.position, p.hold FROM events e "
                           "LEFT JOIN plan p ON p.ticket = e.ref WHERE e.kind = 'ticket' AND e.status = 'queued' "
                           "AND json_extract(e.payload, '$.admitted') ORDER BY p.position IS NULL, p.position, e.created_at"
@@ -59,15 +57,15 @@ def claim_role(con):
     pane = os.environ.get("HERDR_PANE_ID")
     if not pane:
         sys.exit("claim-role: HERDR_PANE_ID is not set. Run it inside a herdr pane.")
-    pol = registry.policy()
-    out = subprocess.run(registry.herdr_cmd(pol) + ["agent", "get", pane],
-                         capture_output=True, text=True, timeout=10).stdout
-    sid = ((json.loads(out or "{}").get("result", {}).get("agent") or {}).get("agent_session") or {}).get("value")
+    try:
+        sid = herdr.session_id(herdr.agent(pane))
+    except (herdr.HerdrError, OSError, ValueError):
+        sid = None
     if not sid:
         sys.exit(f"claim-role: herdr shows no Claude session in pane {pane}")
     registry.upsert_session(con, sid, pane_id=pane)
     con.execute("UPDATE sessions SET role = 'planner' WHERE session_id = ?", (sid,))
-    registry.link(con, "inbox", registry.factory(pol)["inbox_ref"], sid, "claim-role")  # DMs and mentions go to the planner
+    registry.link(con, "inbox", config.policy()["factory"]["inbox_ref"], sid, "claim-role")  # DMs and mentions go to the planner
     print(f"Session {sid} in pane {pane} is the planner.")
 
 
@@ -86,7 +84,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     con = registry.connect()
     if a.cmd == "show":
-        show(con, registry.policy())
+        show(con, config.policy())
     elif a.cmd == "order":
         order(con, a.keys)
     elif a.cmd == "hold":

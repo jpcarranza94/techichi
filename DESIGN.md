@@ -31,7 +31,7 @@ Invariants:
 1. Every update enters the system as an Event. No component acts on a source system directly.
 2. A Session binds to a Ref only through a Link. No component parses a branch name, a session name, or a PR title to route.
 3. Identity comes before execution. The spawner picks the UUID before it starts the agent.
-4. Only Actions talk to herdr. Sources, Recorders, and the Router never call `herdr`.
+4. Only Actions talk to herdr, and only through `herdr.py`. Sources, Recorders, and the Router never call herdr.
 5. The Router is pure. It reads the registry and returns a decision. It writes nothing.
 6. No Event is dropped in silence. Every Event ends as `delivered`, `held`, `unrouted`, or `dropped` with a reason.
 
@@ -95,7 +95,7 @@ The rules apply in order. The first match wins.
 5. The first candidate is `blocked`, `working`, `gone`, or `registered`. Mark `held`. A `working` session handles its own round, review bots included. Its items go out in one batch when it is `idle` or `done`, not as one extra turn for each item. The planner notice and the relay clock keep their own rules.
 6. Otherwise run `prompt`. Mark `delivered`.
 
-The Router batches. All `queued` and `held` Events for one Session go out as one prompt. A `working` agent receives the prompt as its next queued message. If `agent prompt` fails, the batch becomes `held`. The Router and the prompt Action live in `daemon.py`. `route()` is the pure function.
+The Router batches. All `queued` and `held` Events for one Session go out as one prompt. A `working` agent receives the prompt as its next queued message. If `agent prompt` fails, the batch becomes `held`. The Router is `router.py`: `route()`, `admit()`, and the Delivery wrapper, all pure. `daemon.py` applies their decisions in `process()`.
 
 Admission rules for rule 3. Free slots are `[spawn] max_active` minus the Sessions in `registered` or `live` that have a `spawner` `ticket` Link. Contenders are the `queued` admitted tickets with no `hold` and no open `needs-decision`.
 
@@ -313,6 +313,10 @@ The same check sets a Session that has been `gone` for more than 24 hours to `en
 
 The file is `<config>/policy.toml`. `policy.example.toml` documents each key. It has a `[factory]` table, a `[skills]` table, one `[projects.<KEY>]` table per Jira project, a `[route]` table, a `[hold]` table, a `[spawn]` table, a `[jira]` table, a `[slack]` table, and a `[cleanup]` table. Default branches are not in the file. The spawner reads them from GitHub at run time.
 
+`config.policy()` is the only reader of the file. It fills every default and checks the required keys: one `[projects.<KEY>]` table with `repo`, `github`, `admit`, and `start.skill`, the `[jira]` keys, and the `[slack]` keys when `[slack]` exists. A missing key stops `install.py`, `daemon.py --once`, and each command with one line, for example `policy.toml: [jira] needs token_file`. No module repeats a default.
+
+Timers live in the `cursors` table. `registry.due(name)` and `registry.wait(name, delta)` read and set them, for example `github:next`, `relay:next`, and `spawn:last`.
+
 `[factory]` holds the machine data. Each key has a default:
 
 - `herdr_session`: the herdr session that the factory owns. Default `default`. It sets the socket, `herdr --session`, and the hook gate.
@@ -331,18 +335,21 @@ The file is `<config>/policy.toml`. `policy.example.toml` documents each key. It
   schema.sql       the registry schema
   policy.example.toml
                    the policy, with each key documented
-  registry.py      shared code: config, connect() and policy()
+  config.py        the paths, and policy(): the policy with every default, checked at load
+  registry.py      the SQLite registry: connect(), Sessions and Links, the cursors and the clock, the Recorder runner
+  herdr.py         the only module that talks to herdr: the socket and the CLI behind one set of verbs
+  router.py        the Router: route(), admit() and the Delivery wrapper. Pure.
+  daemon.py        the daemon: one pass, the planner and the relay, the herdr sync, the event loop
   install.py       hooks, skills and the plist
   spawn.py         the spawner
   hooks/*.py       the five Recorders
-  daemon.py        the herdr daemon and the Router
   github_source.py the GitHub Source
   jira_source.py   the Jira Source
   slack_source.py  the Slack Source, run by the relay session
   plan.py          the planner tool, the only writer of the plan table
   factory.py       claim, status, cleanup
   launchd/         the LaunchAgent template
-  skills/factory-*/SKILL.md
+  skills/techichi-*/SKILL.md
                    the skill templates
   test_*.py        the checks. testenv.py gives each one a temp config folder.
 <config>/          $TECHICHI_HOME, default ~/.config/techichi

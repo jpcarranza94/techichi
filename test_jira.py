@@ -1,5 +1,6 @@
 """Check for the Jira Source with a stub urlopen. No network, no real token. Run: python3 test_jira.py"""
 import testenv  # noqa: F401  (first: a temp config folder)
+import config  # noqa: E402
 import base64
 import contextlib
 import io
@@ -15,7 +16,7 @@ import registry
 d = Path(tempfile.mkdtemp())
 TOKEN = "tok-SECRET-123"
 (d / "token").write_text(TOKEN + "\n")
-pol = registry.policy()
+pol = config.policy()
 pol["jira"] = {**pol["jira"], "token_file": str(d / "token")}
 con = registry.connect(d / "r.db")
 API, SITE = pol["jira"]["api"], pol["jira"]["site"]

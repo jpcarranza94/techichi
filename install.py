@@ -15,10 +15,10 @@ import shutil
 import sys
 from pathlib import Path
 
-import registry
+import config
 
 CLAUDE = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
-HOOKS = registry.HERE / "hooks"
+HOOKS = config.HERE / "hooks"
 PY = sys.executable  # absolute, so the hooks and launchd do not depend on PATH
 RECORDERS = [("SessionStart", "*", "session_start.py"), ("SessionEnd", "*", "session_end.py"),
              ("PostToolUse", "Bash", "pr_link.py"),
@@ -45,22 +45,22 @@ def hooks(settings=CLAUDE / "settings.json"):
 
 def render(role, pol):
     """The core template with the paths filled in, the name from [skills], and the extra file appended."""
-    text = (registry.HERE / "skills" / f"techichi-{role}" / "SKILL.md").read_text()
-    text = text.replace("{factory}", str(registry.HERE)).replace("{home}", str(registry.HOME))
-    text = re.sub(r"(?m)^name: .*$", f"name: {registry.skill(role, pol)}", text, count=1)
+    text = (config.HERE / "skills" / f"techichi-{role}" / "SKILL.md").read_text()
+    text = text.replace("{factory}", str(config.HERE)).replace("{home}", str(config.HOME))
+    text = re.sub(r"(?m)^name: .*$", f"name: {pol['skills'][role]}", text, count=1)
     extra = pol.get("skills", {}).get("extra")
     if extra:
-        f = registry.HOME / os.path.expanduser(extra) / f"{role}.md"  # an absolute extra path wins over HOME
+        f = config.HOME / os.path.expanduser(extra) / f"{role}.md"  # an absolute extra path wins over HOME
         if f.exists():
             text = text.rstrip("\n") + "\n\n" + f.read_text()
     return text
 
 
 def skills(pol=None):
-    pol = pol or registry.policy()
+    pol = pol or config.policy()
     for role in ROLES:
-        name = registry.skill(role, pol)
-        out = registry.HOME / "skills" / name
+        name = pol['skills'][role]
+        out = config.HOME / "skills" / name
         out.mkdir(parents=True, exist_ok=True)
         (out / "SKILL.md").write_text(render(role, pol))
         print(f"rendered: {out / 'SKILL.md'}")
@@ -77,12 +77,12 @@ def skills(pol=None):
 
 def plist():
     # launchd sets no PATH. The folders of herdr, git and gh go first, for the policy setup commands too.
-    bins = [os.path.dirname(b) for b in (registry.HERDR, registry.GIT, registry.GH) if os.path.isabs(b)]
+    bins = [os.path.dirname(b) for b in (config.HERDR, config.GIT, config.GH) if os.path.isabs(b)]
     path = ":".join(dict.fromkeys(bins + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]))
-    text = (registry.HERE / "launchd" / "techichi.plist.template").read_text()
-    for k, v in {"{python}": PY, "{core}": str(registry.HERE), "{home}": str(registry.HOME), "{path}": path}.items():
+    text = (config.HERE / "launchd" / "techichi.plist.template").read_text()
+    for k, v in {"{python}": PY, "{core}": str(config.HERE), "{home}": str(config.HOME), "{path}": path}.items():
         text = text.replace(k, v)
-    out = registry.HOME / "techichi.plist"
+    out = config.HOME / "techichi.plist"
     out.write_text(text)
     print(f"wrote:   {out}\nInstall it:\n  cp {out} ~/Library/LaunchAgents/\n"
           "  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/techichi.plist")
@@ -93,8 +93,12 @@ if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "all"
     if cmd not in ("all", "hooks", "skills", "plist"):
         sys.exit(__doc__)
-    if not registry.POLICY.exists():
-        sys.exit(f"no policy at {registry.POLICY}. Copy policy.example.toml there first.")
+    if not config.POLICY.exists():
+        sys.exit(f"no policy at {config.POLICY}. Copy policy.example.toml there first.")
+    try:
+        config.policy()  # a bad policy stops the install here, with one clear line
+    except config.PolicyError as e:
+        sys.exit(str(e))
     for name, step in (("hooks", hooks), ("skills", skills), ("plist", plist)):
         if cmd in ("all", name):
             step()

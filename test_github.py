@@ -1,5 +1,6 @@
 """Check for the GitHub Source with fixture notifications and activities. No network. Run: python3 test_github.py"""
 import testenv  # noqa: F401  (first: a temp config folder)
+import config  # noqa: E402
 import contextlib
 import io
 import json
@@ -12,7 +13,7 @@ from pathlib import Path
 import github_source as g
 import registry
 
-pol = registry.policy()
+pol = config.policy()
 db = testenv.HOME / "registry.db"  # the hook below writes there
 con = registry.connect(db)
 ME, CR = "op-login", "coderabbitai[bot]"
@@ -157,11 +158,11 @@ stub.write_text(f"""#!/bin/sh
 case "$4" in *reviews*) cat {d}/reviews.json ;; *) echo '[[]]' ;; esac
 """)
 stub.chmod(0o755)
-real_gh, registry.GH = registry.GH, str(stub)
+real_gh, config.GH = config.GH, str(stub)
 try:
     assert len(g.gh_all("repos/acme/app/pulls/577/reviews?per_page=100")) == g.PER_ACTIVITY_PAGE + 1
     got = g.activities(note("n", "acme/app", 577, "2026-10-28T16:00:05Z"), "2026-10-28T15:50:00Z", login=login)
 finally:
-    registry.GH = real_gh
+    config.GH = real_gh
 assert [e["id"] for e in got] == ["gh:review:999"] and got[0]["payload"]["actor"] == CR
 print("ok")
