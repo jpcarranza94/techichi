@@ -15,6 +15,7 @@ The factory is a small Python daemon for macOS and Linux. It uses only the Pytho
 3. The session runs your start skill for the ticket. It stops after the plan, if you ask for a checkpoint.
 4. Comments, reviews, and pushes on the ticket and its pull requests become Events.
 5. The daemon sends each Event to its session as one short prompt with a link. The session reads the item at its link.
+6. When a session needs you, it asks with the question tool of its harness. herdr marks the pane `blocked`, so a herdr client or a phone client such as Ovis can notify you. The daemon holds new items for that session until you answer.
 
 ## Prerequisites
 

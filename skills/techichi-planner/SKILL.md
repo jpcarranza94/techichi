@@ -7,6 +7,8 @@ description: Decide which admitted tickets the factory starts, and in which orde
 
 BLUF: Draft the start order for the sprint tickets. Show the draft to the operator. Write it with `plan.py` only after the operator approves.
 
+Each time you wait for the operator, ask with the question tool of your harness: `AskUserQuestion` in Claude Code. Put the need, its context, and two to four short options in the question. While it is open, herdr marks the pane `blocked`, so a phone client can notify the operator. If your harness has no question tool, write the need as your last message and stop.
+
 The factory starts one worker session for each admitted ticket. Usually it needs no plan. The factory opens the planner only in these cases:
 
 - `needs-plan`: more tickets wait than the free slots. No ticket starts in the order of the ticket system, because that order does not match what the team wants first. Only planned tickets start, lowest position first.

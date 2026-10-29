@@ -136,6 +136,8 @@ Handle it per the techichi-worker skill.
 
 The behavior for each kind lives in one user skill, the worker skill (`[skills] worker`). A prompt to the planner names the planner skill (`[skills] planner`) instead. The registry carries no behavior.
 
+When a worker or the planner needs the operator, the skill tells it to ask with the question tool of its harness, not with a plain text reply. While the question is open, herdr marks the pane `blocked`: its clients show it, and a phone client can push it. Rule 5 holds the Events of a `blocked` Session, so no prompt types into the question.
+
 ## Spawn
 
 The spawner runs for one ticket key. Steps:
