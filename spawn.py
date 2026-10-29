@@ -2,7 +2,6 @@
 """Start one worker Session for one ticket, or a helper Session. See DESIGN.md section "Spawn"."""
 import argparse
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -11,6 +10,7 @@ import uuid
 from pathlib import Path
 
 import config
+import harness
 import herdr
 import registry
 
@@ -70,13 +70,20 @@ def existing_work(key, p):
     return found
 
 
+def project_of(con, key):
+    """The project of a ticket: payload.project of its newest admission Event, else the key prefix (Jira)."""
+    r = con.execute("SELECT json_extract(payload, '$.project') FROM events WHERE kind = 'ticket' AND ref = ? "
+                    "AND json_extract(payload, '$.admitted') ORDER BY created_at DESC LIMIT 1", (key,)).fetchone()
+    return (r and r[0]) or key.split("-")[0].upper()
+
+
 def spawn(key, slug=None, pol=None, db=None):
     pol = pol or config.policy()
-    project = key.split("-")[0].upper()
-    p = pol["projects"][project]
     branch = f"{key}-{slug}" if slug else key
     sid = str(uuid.uuid4())
     con = registry.connect(db)
+    project = project_of(con, key)
+    p = pol["projects"][project]
 
     # 0. Pre-check, before any row or worktree. A plan row with hold = 0 means the operator approved the start.
     plan = con.execute("SELECT hold FROM plan WHERE ticket = ?", (key,)).fetchone()
@@ -91,7 +98,7 @@ def spawn(key, slug=None, pol=None, db=None):
     registry.link(con, "ticket", key, sid, "spawner")
 
     try:
-        out = _prepare(key, p, project, branch, sid, con, pol["factory"]["worktrees"])
+        out = _prepare(key, p, project, branch, sid, con, pol)
     except Exception:
         # No agent started. A dead registered Session holds its ticket Events forever, so end it.
         # The worktree stays for a retry by hand.
@@ -107,14 +114,14 @@ def spawn(key, slug=None, pol=None, db=None):
     return out
 
 
-def _prepare(key, p, project, branch, sid, con, worktrees):
+def _prepare(key, p, project, branch, sid, con, pol):
     # 2. Default branch from GitHub.
     base = run([config.GH, "repo", "view", p["github"], "--json", "defaultBranchRef",
                 "-q", ".defaultBranchRef.name"]).strip()
     run([config.GIT, "-C", p["repo"], "fetch", "--quiet", "origin", base])
 
     # 3. Worktree, workspace and pane.
-    pane, ws, cwd = herdr.worktree_create(p["repo"], branch, f"origin/{base}", worktrees / key, key)
+    pane, ws, cwd = herdr.worktree_create(p["repo"], branch, f"origin/{base}", pol["factory"]["worktrees"] / key, key)
     con.execute("UPDATE sessions SET cwd = ?, branch = ?, pane_id = ?, workspace_id = ? WHERE session_id = ?",
                 (cwd, branch, pane, ws, sid))
     registry.link(con, "branch", branch, sid, "spawner")
@@ -127,14 +134,22 @@ def _prepare(key, p, project, branch, sid, con, worktrees):
             # ponytail: a failed setup warns and continues, the worker sees it when it runs the tests.
             print(f"setup failed ({r.returncode}): {cmd}\n{r.stderr[-2000:]}", file=sys.stderr)
 
-    # 5. Agent. spawn() then polls for readiness. The agent name is the lowercase key.
-    herdr.start_agent(key.lower(), pane, sid)
+    # 5. Agent of the project's harness. spawn() then polls for readiness. The agent name is the lowercase key.
+    name = harness.of_project(pol, project)
+    herdr.start_agent(key.lower(), pane, harness.HARNESSES[name]["kind"],
+                      harness.start_args(name, sid, pol, [skill_dir(pol, "worker")]))
     return {"session_id": sid, "project": project, "branch": branch, "cwd": cwd,
             "pane_id": pane, "workspace_id": ws, "copied": copied}
 
 
-def spawn_helper(role, cwd, args, first, db=None):
-    """Start a helper Session in a tab `role` of the helper workspace, agent `factory-<role>`. Returns its id."""
+def skill_dir(pol, role):
+    """The rendered skill of a role. install.py skills writes it."""
+    return config.HOME / "skills" / pol["skills"][role]
+
+
+def spawn_helper(role, cwd, kind_and_args, first, db=None):
+    """Start a helper Session in a tab `role` of the helper workspace, agent `factory-<role>`. Returns its id.
+    kind_and_args(sid) returns the herdr kind and the agent args for the new session id."""
     pol = config.policy()
     sid = str(uuid.uuid4())
     con = registry.connect(db)
@@ -146,7 +161,7 @@ def spawn_helper(role, cwd, args, first, db=None):
     try:
         pane, ws, tab = herdr.helper_tab(role, cwd)
         con.execute("UPDATE sessions SET pane_id = ?, workspace_id = ? WHERE session_id = ?", (pane, ws, sid))
-        herdr.start_agent(f"factory-{role}", pane, sid, args=args)
+        herdr.start_agent(f"factory-{role}", pane, *kind_and_args(sid))
     except Exception:
         end(con, sid)
         if tab:  # close only this tab. The other helper keeps running in the same workspace.
@@ -163,13 +178,16 @@ def spawn_helper(role, cwd, args, first, db=None):
 
 def spawn_planner(text, db=None):
     pol = config.policy()
-    return spawn_helper("planner", str(pol["factory"]["helper_cwd"]), ("--permission-mode", "auto"),
+    name = pol["factory"]["harness"]
+    return spawn_helper("planner", str(pol["factory"]["helper_cwd"]),
+                        lambda sid: (harness.HARNESSES[name]["kind"],
+                                     harness.start_args(name, sid, pol, [skill_dir(pol, "planner")])),
                         f"Load the {pol['skills']['planner']} skill. " + text, db)
 
 
 def relay_skill_file(pol=None):
     """The rendered relay skill. install.py writes it. It names the same slack_source.py as relay_args."""
-    return config.HOME / "skills" / (pol or config.policy())["skills"]["relay"] / "SKILL.md"
+    return skill_dir(pol or config.policy(), "relay") / "SKILL.md"
 
 
 def relay_args():
@@ -183,9 +201,8 @@ def relay_args():
     script = config.HERE / "slack_source.py"
     skill = relay_skill_file()  # by path: herdr rejects an argument with a newline
     # The herdr Claude integration installs this hook. The relay needs it through --settings.
-    claude = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
     hook = {"hooks": {"SessionStart": [{"matcher": "*", "hooks": [
-        {"type": "command", "command": f"bash {claude / 'hooks/herdr-agent-state.sh'} session", "timeout": 5}]}]}}
+        {"type": "command", "command": f"bash {harness.CLAUDE / 'hooks/herdr-agent-state.sh'} session", "timeout": 5}]}]}}
     return ("--restricted", "--model", "haiku", "--tools", "Bash", "--permission-mode", "dontAsk",
             "--allowedTools", f"Bash(python3 {script} window)", f"Bash(python3 {script} ingest)",
             "mcp__claude_ai_Slack__slack_search_public_and_private", "mcp__claude_ai_Slack__slack_read_thread",
@@ -193,8 +210,10 @@ def relay_args():
 
 
 def spawn_relay(text, db=None):
+    # The relay is Claude Code only: it needs the claude.ai Slack connector and the Claude transcript.
     # The cwd stays empty on purpose: read-only commands are open inside the cwd.
-    return spawn_helper("relay", str(config.policy()["factory"]["relay_cwd"]), relay_args(), text, db)
+    return spawn_helper("relay", str(config.policy()["factory"]["relay_cwd"]),
+                        lambda sid: ("claude", ["--session-id", sid, *relay_args()]), text, db)
 
 
 if __name__ == "__main__":

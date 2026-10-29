@@ -48,8 +48,10 @@ def bad(p):
 
 
 assert bad({"jira": MIN["jira"]}) == "p.toml: no [projects.<KEY>] table"
-assert bad({"projects": MIN["projects"]}) == "p.toml: [jira] needs api, site, email, token_file"
-assert bad({**MIN, "projects": {"WEB": {"repo": "r", "start": {}}}}) == "p.toml: [projects.WEB] needs github, admit"
+assert bad({"projects": MIN["projects"], "factory": {"sources": ["github", "jira"]}}) == \
+    "p.toml: [jira] needs api, site, email, token_file"  # [jira] only when the Jira Source is on
+assert config.complete({"projects": MIN["projects"]})["factory"]["sources"] == ["github"]  # no Jira, no Slack
+assert bad({**MIN, "projects": {"WEB": {"repo": "r", "start": {}}}}) == "p.toml: [projects.WEB] needs github"
 assert bad({**MIN, "slack": {"me": "U1"}}) == "p.toml: [slack] needs channels, hosts"
 assert bad({**MIN, "projects": {"WEB": {**MIN["projects"]["APP"], "start": {}}}}) == "p.toml: [projects.WEB.start] needs skill"
 

@@ -59,7 +59,7 @@ with tempfile.TemporaryDirectory() as d:
 case "$3 $4" in
   "pane process-info") if [ -e {d}/shell ]; then p=42; else p=null; touch {d}/shell; fi
                        echo '{{"result":{{"process_info":{{"shell_pid":'$p'}}}}}}' ;;
-  "agent start") echo x >> {d}/starts
+  "agent start") echo "$@" >> {d}/starts
                  if [ "$(wc -l < {d}/starts)" -eq 1 ]; then
                    echo '{{"error":{{"code":"agent_pane_busy","message":"not an available shell"}}}}' >&2; exit 1
                  else echo '{{"result":{{"type":"agent_started"}}}}'; fi ;;
@@ -67,8 +67,10 @@ esac
 """)
     stub.chmod(0o755)
     config.HERDR = str(stub)
-    herdr.start_agent("app-1", "wX:p1", "sid", timeout=5)
-    assert Path(d, "shell").exists() and len(Path(d, "starts").read_text().split()) == 2
+    herdr.start_agent("app-1", "wX:p1", "pi", ["--session-id", "sid", "--skill", "/s/w"], timeout=5)
+    starts = Path(d, "starts").read_text().splitlines()
+    assert Path(d, "shell").exists() and len(starts) == 2
+    assert starts[-1].endswith("agent start app-1 --kind pi --pane wX:p1 --timeout 120000 -- --session-id sid --skill /s/w")
 # Pre-check: branches and open PRs that name the key. APP-12 does not match APP-123.
 assert spawn.key_in("APP-12", "app-12-fix") and spawn.key_in("APP-12", "feature/APP-12") and not spawn.key_in("APP-12", "APP-123")
 outputs = {"for-each-ref": "main\nAPP-12-old-try\nAPP-123-other\n",
@@ -143,7 +145,7 @@ def failing_start(*a, **k):
     raise RuntimeError("agent start failed")
 herdr.start_agent = failing_start
 try:
-    spawn.spawn_helper("relay", tempfile.mkdtemp(), (), "x", db=Path(tempfile.mkdtemp(), "h.db"))
+    spawn.spawn_helper("relay", tempfile.mkdtemp(), lambda sid: ("claude", []), "x", db=Path(tempfile.mkdtemp(), "h.db"))
     raise AssertionError("spawn_helper must raise")
 except RuntimeError:
     pass

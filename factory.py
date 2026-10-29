@@ -14,6 +14,7 @@ import time
 from datetime import timedelta
 
 import config
+import harness
 import herdr
 import registry
 
@@ -100,7 +101,8 @@ def status(con, pol, names=None):
     out.append("Unrouted Events: " + (", ".join(f"{u['kind']} {u['n']}" for u in unrouted) or "none"))
     out.append("Sources:")
     for c in con.execute("SELECT source, value, updated_at FROM cursors WHERE source IN "
-                         "('github','github:next','jira','jira:next','slack','slack:poll_next') ORDER BY source"):
+                         "('github','github:next','jira','jira:next','slack','slack:poll_next') "
+                         "OR source LIKE 'source:%' ORDER BY source"):
         out.append(f"  {c['source']:<16} {c['value']:<28} written {c['updated_at']}")
     for role in ("planner", "relay"):
         r = con.execute("SELECT session_id, state, agent_status, pane_id FROM sessions WHERE role = ? AND state != 'ended' "
@@ -153,6 +155,8 @@ def done(con, pol, s, now):
     tickets = [r["ref"] for r in links if r["kind"] == "ticket"]
     prs = [r["ref"] for r in links if r["kind"] == "pr"]
     for t in tickets:
+        if not jira_ticket(con, pol, t):
+            continue  # another Source admitted it: the PRs, the idle time and the clean checkout decide
         d = jira_done(pol, t)
         if d is None:
             return no(f"{t} not found in Jira")
@@ -173,10 +177,18 @@ def done(con, pol, s, now):
     return True, ""
 
 
-def scratch_worktrees(repo, cwd, sid):
-    """Git worktrees that the session made in its Claude scratchpad folder."""
-    slug = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
-    prefix = f"/private/tmp/claude-{os.getuid()}/{slug}/{sid}/"
+def jira_ticket(con, pol, key):
+    """True when the Jira Source admitted the ticket. A ticket with no admission Event counts when Jira is on."""
+    r = con.execute("SELECT source FROM events WHERE kind = 'ticket' AND ref = ? AND json_extract(payload, '$.admitted') "
+                    "ORDER BY created_at DESC LIMIT 1", (key,)).fetchone()
+    return r["source"] == "jira" if r else "jira" in pol["factory"]["sources"]
+
+
+def scratch_worktrees(repo, cwd, sid, name):
+    """Git worktrees that the session made in the scratch folder of its harness `name`."""
+    prefix = harness.scratch_dir(name, cwd, sid)
+    if not prefix:
+        return []
     lines = git("worktree", "list", "--porcelain", cwd=repo).stdout.splitlines()
     return [l.split(" ", 1)[1] for l in lines if l.startswith("worktree ") and os.path.realpath(l.split(" ", 1)[1]).startswith(prefix)]
 
@@ -210,7 +222,7 @@ def cleanup_action(con, pol, s):
             return stop(f"workspace {s['workspace_id']} also runs {', '.join(map(str, others))}")
     if not clean(s["cwd"]):
         return stop("worktree not clean or not pushed")
-    for wt in scratch_worktrees(repo, s["cwd"], s["session_id"]):  # 1.
+    for wt in scratch_worktrees(repo, s["cwd"], s["session_id"], harness.of_project(pol, project)):  # 1.
         if not clean(wt):
             return stop(f"scratch worktree {wt} not clean")
         r = git("worktree", "remove", wt, cwd=repo)

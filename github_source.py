@@ -7,6 +7,7 @@ import subprocess
 from datetime import timedelta
 
 import config
+import harness
 import registry
 from registry import cursor, iso, now, set_cursor  # noqa: F401  (the Source tests use them)
 
@@ -88,7 +89,12 @@ def activities(note, since, fetch=gh_all, login=me):
     return out
 
 
-def poll(con, pol, dry_run=False, since=None, fetch=gh_all, login=me, list_fn=None):
+def head_branch(note, get=None):
+    """The head branch of the PR of a notification: one read of the PR."""
+    return (get or gh)(note["subject"]["url"].replace("https://api.github.com/", ""))["head"]["ref"]
+
+
+def poll(con, pol, dry_run=False, since=None, fetch=gh_all, login=me, list_fn=None, get=None):
     """Insert Events for new PR notifications. Return the count. dry_run prints and writes nothing."""
     if not dry_run and not registry.due(con, "github:next"):
         return 0
@@ -113,7 +119,14 @@ def poll(con, pol, dry_run=False, since=None, fetch=gh_all, login=me, list_fn=No
     for note in notes:
         if note["subject"]["type"] != "PullRequest" or note["repository"]["full_name"].lower() not in repos:
             continue
-        for ev in activities(note, since, fetch, login):
+        evs = activities(note, since, fetch, login)
+        # A harness with no recorder writes no pr Link, so the daemon links the PR by its head branch.
+        # Only then is the extra read worth it: with every harness recording, the payload stays as before.
+        if evs and not all(harness.HARNESSES[n]["recorder"] for n in harness.in_use(pol)):
+            head = head_branch(note, get)
+            for ev in evs:
+                ev["payload"]["head"] = head
+        for ev in evs:
             if dry_run:
                 print(json.dumps(ev))
                 n += 1

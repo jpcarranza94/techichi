@@ -65,6 +65,8 @@ def admissions(con, pol):
     linked = {r[0] for r in con.execute("SELECT l.ref FROM links l JOIN sessions s USING (session_id) "
                                         "WHERE l.kind = 'ticket' AND s.state != 'ended'")}
     for p in pol["projects"].values():
+        if "admit" not in p:
+            continue  # another Source admits the tickets of this project
         for i in search(pol, p["admit"], "summary,statuscategorychangedate"):
             if i["key"] in linked:
                 continue

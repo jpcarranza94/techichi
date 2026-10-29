@@ -134,7 +134,7 @@ con.execute("UPDATE sessions SET agent_status = 'done' WHERE session_id = ?", (W
 # --- the Action: order, no --force, no -D, and a stop on a dirty worktree ---
 steps = []
 WORKSPACES, REMOVE_CLOSES = {"wR"}, False
-f.scratch_worktrees = lambda repo, cwd, sid: ["/private/tmp/claude-501/x/" + sid + "/validation"]
+f.scratch_worktrees = lambda repo, cwd, sid, name: ["/private/tmp/claude-501/x/" + sid + "/validation"]
 
 
 class R:

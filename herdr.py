@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 import config
+from harness import session_id  # noqa: F401  (an id or a session file path, mapped per harness)
 
 
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -72,11 +73,6 @@ def run(*args):
 
 # --- Agents and panes ----------------------------------------------------------------------------------------
 
-def session_id(agent):
-    """The Claude session UUID of a herdr agent record, or None."""
-    return (agent.get("agent_session") or {}).get("value")
-
-
 def snapshot():
     return call("session.snapshot")["snapshot"]
 
@@ -123,14 +119,14 @@ def wait_shell(pane, timeout=60):
     return False
 
 
-def start_agent(name, pane, sid, timeout=60, args=("--permission-mode", "auto")):
-    """agent start, retried on agent_pane_busy for up to timeout seconds. agent_not_ready is not an error."""
+def start_agent(name, pane, kind, args, timeout=60):
+    """agent start of a herdr kind with its agent args, retried on agent_pane_busy for up to timeout seconds.
+    agent_not_ready is not an error. harness.start_args() builds the args, the session id first."""
     wait_shell(pane, timeout)
     end = time.monotonic() + timeout
     while True:
         try:
-            run("agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "120000",
-                "--", "--session-id", sid, *args)
+            run("agent", "start", name, "--kind", kind, "--pane", pane, "--timeout", "120000", "--", *args)
             return
         except HerdrError as e:
             if e.code == "agent_not_ready":

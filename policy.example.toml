@@ -3,6 +3,8 @@
 
 [factory]
 herdr_session   = "default"                     # the herdr session that the factory owns. Hooks act only there.
+harness         = "claude"                      # the coding agent: claude or pi. A project can set its own.
+# sources       = ["github", "jira", "slack"]   # the default: github, plus jira and slack when their tables exist
 worktrees       = "~/code/worktrees"            # one worktree per ticket. Claude Code must trust this folder.
 helper_cwd      = "~/code"                      # the planner's cwd. Claude Code must trust this folder.
 # relay_cwd     = "~/.config/techichi/relay"  # empty on purpose. The default is shown.
@@ -16,12 +18,13 @@ planner = "techichi-planner"
 relay   = "techichi-relay"
 # extra = "skills-extra"                        # a folder in the config dir with worker.md, planner.md, relay.md to append
 
-# One table per Jira project. The key is the Jira project key.
+# One table per project. The key is the ticket key prefix, for example the Jira project key.
 [projects.APP]
 repo   = "~/code/app"                           # the main checkout
 github = "acme/app"
 setup  = []                                     # shell commands to run in a new worktree, for example "npm ci"
-admit  = "project = APP AND sprint in openSprints() AND assignee = currentUser() AND status = 'To Do'"
+# harness = "pi"                                # this project's coding agent, if not [factory] harness
+admit  = "project = APP AND sprint in openSprints() AND assignee = currentUser() AND status = 'To Do'"  # Jira only
 start  = { skill = "ship-ticket", checkpoint = true }  # the start skill. See README section "Start skill".
 # start = { skill = "ship-ticket", checkpoint = true, note = "Use handoff mode confirm." }  # note: extra prompt text
 
@@ -31,6 +34,16 @@ github = "acme/web"
 setup  = ["uv sync"]
 admit  = "project = WEB AND sprint in openSprints() AND assignee = currentUser() AND status = 'To Do'"
 start  = { skill = "ship-ticket", checkpoint = true }
+
+# Extra start arguments for one harness, for example the model of Pi.
+# [harness.pi]
+# args = ["--model", "deepseek/deepseek-chat"]
+
+# A command Source: any program that prints Events, one JSON object per line. See command_source.py.
+# Add its name to [factory] sources.
+# [sources.issues]
+# command = ["python3", "~/techichi/examples/github_issues.py", "--project", "APP", "--repo", "acme/app"]
+# every_seconds = 120
 
 [route]
 ticket = ["coordinator", "worker"]
@@ -45,13 +58,14 @@ notify_after_minutes = 60
 max_active  = 3   # spawned workers at the same time. Each one is a full Claude Code session.
 gap_seconds = 30  # between two Claude starts. Simultaneous starts can race on Claude's own config files.
 
+# Remove this table to run without Jira.
 [jira]
 api        = "https://api.atlassian.com/ex/jira/<cloud-id>/rest/api/3"
 site       = "https://acme.atlassian.net"
 email      = "you@acme.example"
 token_file = "~/.config/techichi/jira-token"  # a scoped token: read:jira-work, read:jira-user
 
-# Remove this table to run without Slack. Then no relay starts.
+# Remove this table to run without Slack. Then no relay starts. The relay needs Claude Code and the claude.ai Slack connector.
 [slack]
 me               = "U0OPERATOR1"                  # your Slack user id. Own messages are skipped.
 channels         = ["C0APPCHAN1", "C0WEBCHAN2"]   # channel ids to read in full

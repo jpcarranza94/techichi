@@ -1,0 +1,17 @@
+# The factory daemon as a systemd user unit. `install.py service` fills in the paths. See DESIGN.md "Daemon".
+# Start:  systemctl --user daemon-reload && systemctl --user enable --now techichi
+# Log:    journalctl --user -u techichi -f
+# Stop:   systemctl --user disable --now techichi
+[Unit]
+Description=techichi factory daemon
+
+[Service]
+ExecStart={python} {core}/daemon.py
+WorkingDirectory={home}
+Environment=TECHICHI_HOME={home}
+Environment=PATH={path}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

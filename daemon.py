@@ -9,9 +9,11 @@ import time
 from datetime import timedelta
 
 sys.dont_write_bytecode = True  # the daemon writes only in the config folder: no __pycache__ next to the code
+import command_source  # noqa: E402
 import config  # noqa: E402
 import factory  # noqa: E402
 import github_source  # noqa: E402
+import harness  # noqa: E402
 import herdr  # noqa: E402
 import jira_source  # noqa: E402
 import registry  # noqa: E402
@@ -62,6 +64,7 @@ def process(con, pol, prompt=None, spawn=None, start_planner=None):
     Spawns at most one ticket per pass, gap_seconds after the last spawn."""
     # Resolved at call time, so a test can replace the module Actions once.
     prompt, spawn, start_planner = prompt or prompt_action, spawn or spawn_action, start_planner or planner_action
+    derive_links(con, pol)
     # ponytail: full scan of pending Events on each pass, fine for hundreds. Index on status already exists.
     # Plan position first, then the oldest, so the next spawn is the planner's first choice.
     evs = con.execute("SELECT e.* FROM events e LEFT JOIN plan p ON e.kind = 'ticket' AND p.ticket = e.ref "
@@ -118,6 +121,22 @@ def process(con, pol, prompt=None, spawn=None, start_planner=None):
     planner(con, pol, prompt, start_planner, attention)
 
 
+def derive_links(con, pol):
+    """A harness with no recorder writes no pr Link. So link a PR Event to the Session whose branch Link equals
+    the PR head branch. The GitHub Source adds `head` only when such a harness is in use."""
+    if all(harness.HARNESSES[n]["recorder"] for n in harness.in_use(pol)):
+        return
+    for ev in con.execute("SELECT DISTINCT e.ref, json_extract(e.payload, '$.head') AS head FROM events e "
+                          "WHERE e.kind = 'pr' AND e.status IN ('queued','unrouted') AND head IS NOT NULL "
+                          "AND NOT EXISTS (SELECT 1 FROM links l WHERE l.kind = 'pr' AND l.ref = e.ref)").fetchall():
+        s = con.execute("SELECT s.session_id, s.project FROM sessions s JOIN links l USING (session_id) "
+                        "WHERE l.kind = 'branch' AND l.ref = ? AND s.state != 'ended' ORDER BY s.created_at DESC",
+                        (ev["head"],)).fetchone()
+        if s and s["project"] in pol["projects"] and not harness.HARNESSES[harness.of_project(pol, s["project"])]["recorder"]:
+            registry.link(con, "pr", ev["ref"], s["session_id"], "derived:branch")
+            log("derived pr link", ev["ref"], "to", s["session_id"])
+
+
 # --- Helper Sessions: the planner and the relay -----------------------------------------------------------
 
 def end_stuck(con, role):
@@ -131,7 +150,7 @@ def end_stuck(con, role):
 def relay(con, pol, prompt=None, start=None):
     """Keep one relay session, and prompt it with "[factory] slack poll" while it is idle or done.
     The interval is poll_minutes, and it doubles up to max_poll_minutes while Slack is quiet."""
-    if "slack" not in pol:
+    if "slack" not in pol or "slack" not in pol["factory"]["sources"]:
         return
     prompt, start, slack = prompt or prompt_action, start or relay_action, pol["slack"]
     end_stuck(con, "relay")
@@ -226,11 +245,12 @@ def branch_of(cwd):
         return None
 
 
-def sync(con, snap):
-    """Match herdr agents to Sessions by UUID. Missing Sessions go gone. Unknown agents become unclaimed workers."""
-    seen = set()
+def sync(con, snap, pol=None):
+    """Match herdr agents to Sessions by session id. Missing Sessions go gone. Unknown agents become unclaimed workers.
+    Only the agent kinds of the harnesses in the policy count."""
+    seen, kinds = set(), harness.kinds(pol or config.policy())
     for a in snap["agents"]:
-        sid = herdr.session_id(a) if a.get("agent") == "claude" else None
+        sid = herdr.session_id(a) if a.get("agent") in kinds else None
         if not sid:
             continue
         seen.add(sid)
@@ -265,12 +285,15 @@ def apply_tokens(con):
 
 def resync(con, pol, tokens=False):
     gone = {r[0] for r in con.execute("SELECT session_id FROM sessions WHERE state = 'gone'")}
-    sync(con, herdr.snapshot())
+    sync(con, herdr.snapshot(), pol)
     if tokens:
         apply_tokens(con)
-    for name, source in (("github", github_source), ("jira", jira_source)):
+    for name in pol["factory"]["sources"]:
+        if name == "slack":
+            continue  # the relay clock below runs the Slack Source
         try:
-            n = source.poll(con, pol)
+            source = {"github": github_source, "jira": jira_source}.get(name)
+            n = source.poll(con, pol) if source else command_source.poll(con, pol, name)
             if n:
                 log(name, n, "events")
         except Exception as e:  # a Source failure must never cause a herdr reconnect

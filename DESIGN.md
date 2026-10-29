@@ -1,6 +1,6 @@
 # Techichi design
 
-BLUF: The factory routes Jira, GitHub, and Slack updates to the Claude Code session that owns the work. It also starts one session for each new ticket in the sprint.
+BLUF: The factory routes Jira, GitHub, and Slack updates to the coding agent session that owns the work. It also starts one session for each new ticket in the sprint.
 
 The operator is the person who runs the factory. The config folder is `$TECHICHI_HOME`, default `~/.config/techichi`. It holds `policy.toml` and `registry.db`. `<core>` is the folder of this repo.
 
@@ -11,7 +11,7 @@ The system has four nouns, four verbs, and one data file.
 Nouns:
 
 - **Ref**: a thing in a source system. It has a `kind` and a `ref`. Kinds: `ticket`, `pr`, `branch`, `slack`, `inbox`. The one `inbox` Ref is `[factory] inbox_ref`, default `operator`: DMs and mentions of the operator with no other Ref. It goes to the planner.
-- **Session**: one Claude Code session. Its key is the Claude session UUID. Roles: `worker`, `coordinator`, `relay`, `planner`. The planner Session decides which admitted tickets start, and in which order.
+- **Session**: one coding agent session. Its key is the session id of its harness: a UUID that the spawner picks. Roles: `worker`, `coordinator`, `relay`, `planner`. The planner Session decides which admitted tickets start, and in which order.
 - **Link**: a fact that a Session works on a Ref. The spawner, a Recorder, or `claim` creates it.
 - **Event**: one update from a source system about one Ref.
 
@@ -145,7 +145,7 @@ The spawner runs for one ticket key. Steps:
 2. Read the default branch: `gh repo view <github> --json defaultBranchRef -q .defaultBranchRef.name`.
 3. Run `herdr --session <session> worktree create --cwd <repo> --branch <branch> --base origin/<default> --path <worktrees>/<KEY> --label <KEY> --no-focus`. The branch is `<KEY>` or `<KEY>-<slug>`. Record `cwd`, `workspace_id`, `pane_id`. Insert the `branch` Link.
 4. Copy each file that `.worktreeinclude` lists and `git check-ignore` confirms. Run the `setup` commands from the policy.
-5. Run `herdr --session <session> agent start <key> --kind claude --pane <pane_id> -- --session-id <uuid> --permission-mode auto`.
+5. Run `herdr --session <session> agent start <key> --kind <harness kind> --pane <pane_id> -- <harness args>`. The project's harness builds the args: the session flag and the UUID first. See "Harnesses".
 6. Run `herdr --session <session> pane report-metadata <pane_id> --source <metadata_source> --token ticket=<KEY>`.
 7. Send the first prompt: load the worker skill (`[skills] worker`), then run the start skill of the project (`[projects.X] start.skill`) for `<KEY>` in place. With `start.checkpoint = true`, the prompt asks for the plan checkpoint. See README section "Start skill".
 
@@ -159,7 +159,7 @@ Worktrees live under `[factory] worktrees`. Claude Code must trust that folder, 
 
 ## Recorders
 
-Five Python scripts in `hooks/`. `~/.claude/settings.json` points to each script by absolute path. A Recorder acts only when `HERDR_SESSION` matches `[factory] herdr_session`. Otherwise it exits 0 and writes nothing. To add the five entries, run `install.py hooks` with Python 3.11 or later. The hooks need it for `tomllib`. The entries name that Python by absolute path. A Recorder also needs `HERDR_PANE_ID` and a `policy.toml` in the config folder. With no policy, it exits 0 and writes nothing. Each reads stdin, writes SQLite, and exits 0 in every case. Each has a 5 second timeout. A Recorder must never block a Session.
+Five Python scripts in `hooks/`. They are Claude Code hooks, so only the `claude` harness has them. `~/.claude/settings.json` points to each script by absolute path. A Recorder acts only when `HERDR_SESSION` matches `[factory] herdr_session`. Otherwise it exits 0 and writes nothing. To add the five entries, run `install.py hooks` with Python 3.11 or later. The hooks need it for `tomllib`. The entries name that Python by absolute path. A Recorder also needs `HERDR_PANE_ID` and a `policy.toml` in the config folder. With no policy, it exits 0 and writes nothing. Each reads stdin, writes SQLite, and exits 0 in every case. Each has a 5 second timeout. A Recorder must never block a Session.
 
 | Hook | Matcher | Writes |
 |---|---|---|
@@ -175,7 +175,7 @@ The daemon reads `branch` with `git -C <cwd> branch --show-current` on each stat
 
 ## Daemon
 
-One Python process under launchd, label `techichi`, with `KeepAlive`. It connects to `the herdr socket of `[factory] herdr_session``.
+One Python process under launchd (macOS, label `techichi`, `KeepAlive`) or a systemd user service (Linux, `Restart=always`). It connects to `the herdr socket of `[factory] herdr_session``.
 
 It subscribes to:
 
@@ -199,14 +199,41 @@ Held Events older than `notify_after_minutes` write one log line. The daemon doe
 
 `python3 daemon.py --once` runs one pass and exits.
 
-Install the LaunchAgent:
+Install the service with `python3 <core>/install.py service`. It picks the OS:
 
-1. Run `python3 <core>/install.py plist`. It writes `<config>/techichi.plist` from `launchd/techichi.plist.template`.
-2. Run `cp <config>/techichi.plist ~/Library/LaunchAgents/`.
-3. Run `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/techichi.plist`.
-4. Read the log at `<config>/daemon.log`.
+- macOS: it writes `<config>/techichi.plist` from `launchd/techichi.plist.template`. Copy it to `~/Library/LaunchAgents/` and run `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/techichi.plist`. The log is `<config>/daemon.log`.
+- Linux: it writes `~/.config/systemd/user/techichi.service` from `systemd/techichi.service.template`. Run `systemctl --user daemon-reload` and `systemctl --user enable --now techichi`. On a machine with no login session, run `loginctl enable-linger $USER`. The log is in `journalctl --user -u techichi`.
 
-The plist holds the absolute path of `python3` and a `PATH` with the folders of `herdr`, `git`, and `gh`, because launchd sets no `PATH`.
+Both files hold the absolute path of `python3` and a `PATH` with the folders of `herdr`, `git`, and `gh`, because a service manager can give no `PATH`.
+
+## Harnesses
+
+A harness is the coding agent of a Session. `harness.py` holds one dict entry for each:
+
+| Key | Meaning |
+|---|---|
+| `kind` | the herdr `--kind` |
+| `args` | the start args after the session id. `[harness.<name>] args` in the policy adds more. |
+| `session` | the flag that sets the session id. The spawner picks the id before the start. |
+| `skills` | `link`: `install.py skills` links the worker and planner skills into `skills_dir`. `arg`: the spawner passes the rendered skill folder with `skill_flag`. |
+| `recorder` | `true` when the harness has the Recorder hooks |
+| `scratch` | the folder under the real `/tmp` where the agent makes its own worktrees, or none |
+
+`[factory] harness` is the default for workers and the planner. `[projects.X] harness` overrides it for one project. The relay is always `claude`.
+
+herdr reports the session of an agent as an id or as the path of a session file. `harness.session_id()` maps both to the id: a path `<time>_<id>.jsonl` (Pi) gives the part after the last `_`. `daemon.sync` matches the agents of every harness kind in use.
+
+A harness with no recorder writes no `pr` Link. Then the GitHub Source adds the PR head branch to the payload, and `daemon.derive_links()` links an unrouted PR Event to the Session whose `branch` Link equals that head branch, with `created_by = derived:branch`. With only recording harnesses in use, the GitHub Source reads no head branch, and the step does nothing.
+
+`test_harness.py` is the conformance test. Each entry must have a herdr kind, a session flag, a valid skills mode, a start command with the session id first, and a sample of its herdr session report.
+
+## Command Source
+
+`[factory] sources` lists the Sources: `github`, `jira`, `slack`, or a name with a `[sources.<name>]` table. With no `sources` key, the list is `github`, then `jira` if `[jira]` exists, then `slack` if `[slack]` exists.
+
+A command Source runs `command` every `every_seconds` (default 60), with a timeout of `timeout_seconds` (default 60). The env has `TECHICHI_SINCE`, the start time of the last good run. The command prints one JSON object per line: `id`, `kind`, `ref`, and `payload`. `command_source.py` checks each line. The `kind` must be in `[route]`. An admitted Event must be a `ticket` with a key-shaped ref, and its project (`payload.project`, else the key prefix) must be in the policy. A bad line is skipped with one log line that never holds the line. A failed run moves no cursor. The Event id is `<name>:<id>`.
+
+Admission is a property of an Event: `kind = ticket` and `admitted = true`. The spawner reads the project from the newest admission Event, and it falls back to the key prefix. Cleanup asks Jira only about a ticket that the Jira Source admitted.
 
 ## GitHub Source
 
@@ -290,7 +317,7 @@ A test session proved it. Arbitrary Bash, chained commands, redirects, a heredoc
 
 Every 10 minutes, the daemon checks each `live` Session with a `spawner` `ticket` Link. It never touches a hand-started session, the planner, or the relay. A Session is done when all of these are true:
 
-- Its Jira ticket has a status named in `[cleanup] done_statuses`: today `Done` and `Won't Do`. A 404 skips the Session. the operator works in a session after the merge, so the merge alone is not enough. The status category is not enough either: Jira puts `Ready for Deploy` in the done category, but the deploy and the validation come after it.
+- Its Jira ticket, if the Jira Source admitted it, has a status named in `[cleanup] done_statuses`: today `Done` and `Won't Do`. A 404 skips the Session. the operator works in a session after the merge, so the merge alone is not enough. The status category is not enough either: Jira puts `Ready for Deploy` in the done category, but the deploy and the validation come after it.
 - Each of its `pr` Links is merged or closed. A Session with no PR is not done.
 - Its agent status was `idle` or `done` at every check for at least 60 minutes. The cursor `cleanup:<session_id>` holds the first eligible time. Any failed condition resets it.
 - Its worktree is clean, and `HEAD` has no commit that no remote branch has. If the upstream branch is gone, the worktree is kept.
@@ -302,7 +329,7 @@ Two guards come first. Each one stops the Action with one log line:
 
 The cleanup Action stops at the first failure and writes one log line:
 
-1. Remove the clean git worktrees in the Session's scratchpad folder, `/private/tmp/claude-<uid>/<cwd slug>/<session_id>/`.
+1. Remove the clean git worktrees in the scratch folder of the Session's harness. For `claude` that is `<real /tmp>/claude-<uid>/<cwd slug>/<session_id>/`.
 2. If the workspace is open, run `herdr worktree remove --workspace <id>`, never with `--force`. It also closes the workspace. If the workspace stays, the Action closes it. If the workspace is closed, run `git worktree remove <cwd>` in the main checkout, never with `--force`.
 3. Run `git branch -d <branch>` in the main checkout. Never `-D`, and never a remote branch.
 4. Set the Session `ended`, with one log line that names the ticket.
@@ -350,6 +377,8 @@ Timers live in the `cursors` table. `registry.due(name)` and `registry.wait(name
   registry.py      the SQLite registry: connect(), Sessions and Links, the cursors and the clock, the Recorder runner
   herdr.py         the only module that talks to herdr: the socket and the CLI behind one set of verbs
   router.py        the Router: route(), admit() and the Delivery wrapper. Pure.
+  harness.py       the harness adapters: Claude Code and Pi
+  command_source.py the command Source: any program that prints Events
   daemon.py        the daemon: one pass, the planner and the relay, the herdr sync, the event loop
   install.py       hooks, skills and the plist
   spawn.py         the spawner
@@ -359,7 +388,9 @@ Timers live in the `cursors` table. `registry.due(name)` and `registry.wait(name
   slack_source.py  the Slack Source, run by the relay session
   plan.py          the planner tool, the only writer of the plan table
   factory.py       claim, status, cleanup
-  launchd/         the LaunchAgent template
+  launchd/         the LaunchAgent template (macOS)
+  systemd/         the systemd user unit template (Linux)
+  examples/        command Sources, for example github_issues.py
   skills/techichi-*/SKILL.md
                    the skill templates
   test_*.py        the checks. testenv.py gives each one a temp config folder.
