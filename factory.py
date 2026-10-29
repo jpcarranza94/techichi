@@ -211,15 +211,21 @@ def cleanup_action(con, pol, s):
     d = dirs.stdout.split()
     if dirs.returncode or len(d) != 2 or d[0] == d[1]:
         return stop(f"{s['cwd']} is not a linked worktree")
+    try:
+        agents = [a for a in herdr.agents() if herdr.session_id(a) != s["session_id"]]
+    except Exception as e:
+        return stop(f"herdr agent list: {e}")
     # herdr worktree remove closes the whole workspace and kills every pane in it.
-    if s["workspace_id"]:
-        try:
-            others = [a.get("name") or a.get("pane_id") for a in herdr.agents()
-                      if a.get("workspace_id") == s["workspace_id"] and herdr.session_id(a) != s["session_id"]]
-        except Exception as e:
-            return stop(f"herdr agent list: {e}")
-        if others:
-            return stop(f"workspace {s['workspace_id']} also runs {', '.join(map(str, others))}")
+    others = [a.get("name") or a.get("pane_id") for a in agents if s["workspace_id"] and a.get("workspace_id") == s["workspace_id"]]
+    if others:
+        return stop(f"workspace {s['workspace_id']} also runs {', '.join(map(str, others))}")
+    # Another Session can work in the same checkout, for example a second spawn of the same ticket.
+    users = [a.get("name") or a.get("pane_id") for a in agents if inside(a.get("cwd"), s["cwd"])]
+    users += [r["session_id"][:8] for r in con.execute("SELECT session_id, cwd FROM sessions WHERE session_id != ? "
+                                                       "AND state IN ('live','registered')", (s["session_id"],))
+              if inside(r["cwd"], s["cwd"])]
+    if users:
+        return stop(f"{s['cwd']} is also used by {', '.join(map(str, users))}")
     if not clean(s["cwd"]):
         return stop("worktree not clean or not pushed")
     for wt in scratch_worktrees(repo, s["cwd"], s["session_id"], harness.of_project(pol, project)):  # 1.
@@ -250,19 +256,35 @@ def cleanup_action(con, pol, s):
     return True
 
 
+def inside(path, root):
+    """True when path is root or a folder in it."""
+    if not path:
+        return False
+    path, root = os.path.realpath(path), os.path.realpath(root)
+    return path == root or path.startswith(root + os.sep)
+
+
+def checkout_left(s):
+    """True when the checkout of a Session still exists."""
+    return bool(s["cwd"]) and os.path.isdir(s["cwd"])
+
+
 def open_workspaces():
     return {w["workspace_id"] for w in herdr.workspaces()}
 
 
 def cleanup_closed(con, pol, gone_before):
-    """A spawned worker whose workspace the operator closed by hand. A herdr restart can hide every agent for a
-    while, so the Session must be gone in two passes in a row (gone_before) and its workspace absent from herdr.
-    herdr restores workspaces with their ids, so a restored workspace counts as open. One try for each Session:
-    a stop writes one log line, and factory.py cleanup KEY can try again."""
+    """A spawned worker whose workspace the operator closed by hand. Claude Code runs its SessionEnd hook when the
+    workspace closes, so the Session is ended. An agent with no hook is gone. Either way the checkout stays.
+    A herdr restart can stop every agent for a while, so the Session must be gone or ended in two passes in a row
+    (gone_before), its checkout must still exist, and its workspace must be absent from herdr. herdr restores
+    workspaces with their ids, so a restored workspace counts as open. One try for each Session: a stop writes
+    one log line, and factory.py cleanup KEY can try again."""
     rows = [s for s in con.execute("SELECT DISTINCT s.* FROM sessions s JOIN links l USING (session_id) WHERE s.role IN "
-                                   "('worker','coordinator') AND s.state = 'gone' AND l.kind = 'ticket' "
+                                   "('worker','coordinator') AND s.state IN ('gone','ended') AND l.kind = 'ticket' "
                                    "AND l.created_by = 'spawner'").fetchall()
-            if s["session_id"] in gone_before and s["workspace_id"] and not registry.cursor(con, f"closed:{s['session_id']}")]
+            if s["session_id"] in gone_before and s["workspace_id"] and checkout_left(s)
+            and not registry.cursor(con, f"closed:{s['session_id']}")]
     if not rows:
         return
     ws = open_workspaces()
@@ -294,8 +316,9 @@ def auto_cleanup(con, pol, now=None):
 
 
 def cleanup_by_hand(con, pol, key):
-    rows = con.execute("SELECT DISTINCT s.* FROM sessions s JOIN links l USING (session_id) WHERE l.kind = 'ticket' "
-                       "AND l.ref = ? AND s.role IN ('worker','coordinator') AND s.state != 'ended'", (key.upper(),)).fetchall()
+    rows = [s for s in con.execute("SELECT DISTINCT s.* FROM sessions s JOIN links l USING (session_id) WHERE l.kind = 'ticket' "
+                                   "AND l.ref = ? AND s.role IN ('worker','coordinator')", (key.upper(),)).fetchall()
+            if s["state"] != "ended" or checkout_left(s)]  # an ended Session counts while its checkout is left
     if not rows:
         raise ValueError(f"no worker Session has ticket {key.upper()}")
     return all([cleanup_action(con, pol, s) for s in rows])

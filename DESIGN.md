@@ -311,7 +311,7 @@ A test session proved it. Arbitrary Bash, chained commands, redirects, a heredoc
 
 - `factory.py claim REF [--session PANE|NAME|UUID]`: link a Session to a Ref with `created_by = claim`. REF is a ticket key of a policy project, a PR URL of a policy repo, or a Slack permalink, stored as `<channel>:<thread_ts or ts>`. Anything else is rejected. The default Session is the caller's pane. A missing Session row is inserted from the herdr agent record. The next Router pass delivers the `unrouted` Events of that Ref, and an admitted ticket with a Link does not spawn. There is no `unclaim`.
 - `factory.py status`: read only. The Sessions that are not `ended`, with role, agent name or pane, state, agent status, ticket, PRs, and held count. The slots in use against `max_active`. The waiting admitted tickets with their reasons. The unrouted Events by kind. The last write of each Source cursor. The planner and the relay.
-- `factory.py cleanup KEY`: run the cleanup Action for each worker Session on that ticket, a hand-started one too. It skips the Jira, PR, and idle checks, and it keeps the clean-worktree check. There is no `--force`. It also works for a `gone` Session whose workspace is closed.
+- `factory.py cleanup KEY`: run the cleanup Action for each worker Session on that ticket, a hand-started one too. It skips the Jira, PR, and idle checks, and it keeps the clean-worktree check. There is no `--force`. It also works for a `gone` or `ended` Session whose workspace is closed and whose checkout is left.
 
 ## Cleanup
 
@@ -322,10 +322,11 @@ Every 10 minutes, the daemon checks each `live` Session with a `spawner` `ticket
 - Its agent status was `idle` or `done` at every check for at least 60 minutes. The cursor `cleanup:<session_id>` holds the first eligible time. Any failed condition resets it.
 - Its worktree is clean, and `HEAD` has no commit that no remote branch has. If the upstream branch is gone, the worktree is kept.
 
-Two guards come first. Each one stops the Action with one log line:
+Three guards come first. Each one stops the Action with one log line:
 
 - The cwd must be a linked worktree: `git rev-parse --git-dir` differs from `--git-common-dir`. A hand-started session can work in the main checkout itself.
 - No other agent may run in the Session's workspace. `herdr worktree remove` closes the whole workspace and kills every pane in it.
+- No other `live` or `registered` Session and no other herdr agent may work in the checkout. A second spawn of the same ticket can use the same checkout.
 
 The cleanup Action stops at the first failure and writes one log line:
 
@@ -338,11 +339,12 @@ The same check sets a Session that has been `gone` for more than 24 hours to `en
 
 ### A workspace closed by hand
 
-When the operator closes the workspace of a spawned worker, the daemon runs the cleanup Action for it at once, with no Jira, PR, or idle check. The guards and the clean-worktree check stay, so a dirty checkout or a local-only commit stops the Action with one log line, and nothing is lost.
+When the operator closes the workspace of a spawned worker, the agent stops. Claude Code runs its `SessionEnd` hook, so the Session is `ended`. An agent with no hook is `gone`. Either way the checkout and the branch stay. The daemon then runs the cleanup Action for it at once, with no Jira, PR, or idle check. The guards and the clean-worktree check stay, so a dirty checkout or a local-only commit stops the Action with one log line, and nothing is lost.
 
 A herdr restart can hide every agent until a client attaches. So the Action runs only when both are true:
 
-- The Session was `gone` before this pass and is still `gone` after it: two passes in a row.
+- The Session was `gone` or `ended` before this pass and still is after it: two passes in a row.
+- Its checkout still exists.
 - Its workspace id is not in `herdr workspace list`. herdr restores workspaces with their ids, so a restored workspace counts as open.
 
 Each Session gets one try. The cursor `closed:<session_id>` records it. After a stop, fix the checkout and run `factory.py cleanup KEY`.

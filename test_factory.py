@@ -193,6 +193,7 @@ assert not f.cleanup_action(con, pol, s()) and s()["state"] == "live"
 f.git = fake_git
 
 # --- a workspace closed by hand: gone in two passes in a row, and the workspace absent from herdr ---
+f.checkout_left = lambda s_: True  # the checkout /wt/APP-1325 exists only in the stubs
 logs = []
 f.log = lambda *a: logs.append(" ".join(map(str, a)))
 con.execute("UPDATE sessions SET state = 'gone' WHERE session_id = ?", (W,))
@@ -224,6 +225,31 @@ steps.clear()
 f.cleanup_closed(con, pol, {W})
 assert s()["state"] == "ended" and ("git", "worktree", "remove", "/wt/APP-1325") in steps
 assert steps[-1][:4] == ("git", "branch", "-d", "APP-1325-x")
+# Claude Code runs its SessionEnd hook when the workspace closes, so the Session is ended, not gone. Same cleanup.
+con.execute("UPDATE sessions SET state = 'ended' WHERE session_id = ?", (W,))
+steps.clear()
+f.cleanup_closed(con, pol, {W})
+assert ("git", "worktree", "remove", "/wt/APP-1325") in steps and steps[-1][:4] == ("git", "branch", "-d", "APP-1325-x")
+# An ended Session whose checkout is gone: no try, no log line.
+logs.clear()
+steps.clear()
+f.checkout_left = lambda s_: False
+f.cleanup_closed(con, pol, {W})
+assert steps == [] and logs == []
+f.checkout_left = lambda s_: True
+# A second Session of the ticket works in the same checkout: stop before any step, with one log line.
+con.execute("INSERT INTO sessions (session_id, role, project, cwd, state) VALUES ('again', 'worker', 'APP', '/wt/APP-1325/sub', 'live')")
+steps.clear()
+f.cleanup_closed(con, pol, {W})
+assert [x for x in steps if x[0] == "git"] == [] and any("also used by again" in line for line in logs)
+con.execute("DELETE FROM sessions WHERE session_id = 'again'")
+# The same for an agent that herdr shows in the checkout, with no Session row.
+AGENTS.append({"name": "hand-shell", "pane_id": "wX:p1", "workspace_id": "wX", "cwd": "/wt/APP-1325", "agent_session": {"value": "x"}})
+registry.drop_cursor(con, f"closed:{W}")
+steps.clear()
+f.cleanup_closed(con, pol, {W})
+assert [x for x in steps if x[0] == "git"] == [] and any("also used by hand-shell" in line for line in logs)
+AGENTS.pop()
 con.execute("UPDATE sessions SET state = 'live' WHERE session_id = ?", (W,))
 
 # --- auto_cleanup: only spawned workers, at most every 10 minutes, and the 24-hour rule ---
@@ -249,7 +275,7 @@ assert checked == [W, W]
 f.done = real_done
 
 # --- cleanup by hand: any worker on the ticket, the clean check stays ---
-con.execute("UPDATE sessions SET state = 'live', cwd = '/x', workspace_id = NULL, branch = NULL WHERE session_id = 'hand'")
+con.execute("UPDATE sessions SET state = 'live', cwd = '/hand', workspace_id = NULL, branch = NULL WHERE session_id = 'hand'")
 steps.clear()
 assert f.cleanup_by_hand(con, pol, "app-1") and con.execute("SELECT state FROM sessions WHERE session_id = 'hand'").fetchone()[0] == "ended"
 assert con.execute("SELECT state FROM sessions WHERE session_id = 'plan'").fetchone()[0] == "live"
