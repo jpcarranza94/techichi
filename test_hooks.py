@@ -55,6 +55,15 @@ assert q("SELECT state FROM sessions WHERE session_id = 's1'") == [("ended",)]
 fire("session_end.py", {"session_id": "s2", "hook_event_name": "SessionEnd"})
 assert q("SELECT state FROM sessions WHERE session_id = 's2'") == [("ended",)]
 
+# /clear in a reviewer pane: r2 takes the review Link and the role, r1 ends.
+fire("session_start.py", {"session_id": "r1", "cwd": d, "source": "startup"}, pane="wR:p1")
+sqlite3.connect(DB, isolation_level=None).executescript(
+    "UPDATE sessions SET role = 'reviewer' WHERE session_id = 'r1';"
+    "INSERT INTO links (kind, ref, session_id, created_by) VALUES ('review', 'https://github.com/acme/app/pull/7', 'r1', 'spawner');")
+fire("session_start.py", {"session_id": "r2", "cwd": d, "source": "clear"}, pane="wR:p1")
+assert q("SELECT kind, ref FROM links WHERE session_id = 'r2'") == [("review", "https://github.com/acme/app/pull/7")]
+assert q("SELECT role FROM sessions WHERE session_id = 'r2'") == [("reviewer",)]
+
 # Bad input never fails the hook.
 fire("pr_link.py", "not json")
 print("ok")

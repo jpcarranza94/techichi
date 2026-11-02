@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Recorder, SessionStart: upsert the Session. On /clear, take over the ticket Links of the previous Session in the pane."""
+"""Recorder, SessionStart: upsert the Session. On /clear, take over the ticket and review Links of the previous Session
+in the pane."""
 import os
 import sys
 
@@ -18,8 +19,9 @@ def record(con, data):
                        "ORDER BY coalesce(last_seen, created_at) DESC LIMIT 1", (pane, sid)).fetchone()
     if not prev:
         return
-    for (ref,) in con.execute("SELECT ref FROM links WHERE kind = 'ticket' AND session_id = ?", (prev["session_id"],)).fetchall():
-        registry.link(con, "ticket", ref, sid, "hook:session_start")
+    for kind, ref in con.execute("SELECT kind, ref FROM links WHERE kind IN ('ticket','review') AND session_id = ?",
+                                 (prev["session_id"],)).fetchall():
+        registry.link(con, kind, ref, sid, "hook:session_start")
     con.execute("UPDATE sessions SET role = ? WHERE session_id = ?", (prev["role"], sid))
     con.execute("UPDATE sessions SET state = 'ended', ended_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') "
                 "WHERE session_id = ?", (prev["session_id"],))
