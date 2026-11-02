@@ -43,6 +43,11 @@ def spawn_action(key, slug=None):
     return spawn.spawn(key, slug or None)["session_id"]
 
 
+def review_action(url):
+    import spawn
+    return spawn.spawn_review(url)["session_id"]
+
+
 def planner_action(text):
     import spawn
     return spawn.spawn_planner(text)
@@ -61,7 +66,7 @@ def existing_work(e):
 
 def process(con, pol, prompt=None, spawn=None, start_planner=None):
     """One Router pass over every pending Event. Batches all deliveries for one Session into one prompt.
-    Spawns at most one ticket per pass, gap_seconds after the last spawn."""
+    Spawns at most one ticket or review per pass, gap_seconds after the last spawn."""
     # Resolved at call time, so a test can replace the module Actions once.
     prompt, spawn, start_planner = prompt or prompt_action, spawn or spawn_action, start_planner or planner_action
     derive_links(con, pol)
@@ -90,7 +95,8 @@ def process(con, pol, prompt=None, spawn=None, start_planner=None):
         ev = ready[0]
         registry.set_cursor(con, "spawn:last", registry.now())
         try:
-            sid = spawn(ev["ref"], json.loads(ev["payload"]).get("slug"))
+            sid = (review_action(ev["ref"]) if ev["kind"] == "review"  # a module Action, so a test can replace it
+                   else spawn(ev["ref"], json.loads(ev["payload"]).get("slug")))
             log("spawned", ev["ref"], sid)
             # The kickoff prompt covers the ticket. A second prompt only costs the worker a turn.
             con.execute(f"UPDATE events SET status = 'delivered', session_id = ?, reason = 'first-prompt', "
@@ -102,7 +108,8 @@ def process(con, pol, prompt=None, spawn=None, start_planner=None):
             else:
                 con.execute("UPDATE events SET status = 'unrouted', reason = ? WHERE id = ?",
                             (f"spawn failed: {e}"[:500], ev["id"]))
-                attention.append(f"{ev['ref']} (spawn failed)")
+                if ev["kind"] == "ticket":  # the planner plans tickets only. The log line covers a review.
+                    attention.append(f"{ev['ref']} (spawn failed)")
             log("spawn stopped", ev["ref"], e)
     for sid, group in batches.items():
         pane = con.execute("SELECT pane_id FROM sessions WHERE session_id = ?", (sid,)).fetchone()["pane_id"]

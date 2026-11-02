@@ -42,6 +42,17 @@ con.execute("INSERT INTO sessions (session_id, role, state) VALUES ('p1', 'plann
 assert {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")} >= {"sessions", "plan", "links", "events"}
 registry.connect(db)  # a second connect does not migrate again
 assert con.execute("SELECT count(*) FROM sessions").fetchone()[0] == 2
+# A registry from before the reviewer role migrates too: the check lacks a role of schema.sql.
+old = config.HERE.joinpath("schema.sql").read_text().replace(",'reviewer'", "")
+assert "'reviewer'" not in old
+o = sqlite3.connect(d / "old2.db")
+o.executescript(old)
+o.execute("INSERT INTO sessions (session_id, role, state) VALUES ('p1', 'planner', 'live')")
+o.commit()
+o.close()
+con = registry.connect(d / "old2.db")
+con.execute("INSERT INTO sessions (session_id, role, state) VALUES ('r1', 'reviewer', 'live')")
+assert [r[0] for r in con.execute("SELECT role FROM sessions ORDER BY session_id")] == ["planner", "reviewer"]
 
 # --- plan.py ---
 con = registry.connect(d / "plan.db")

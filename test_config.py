@@ -25,8 +25,10 @@ pol = config.complete(MIN)
 f = pol["factory"]
 assert (f["herdr_session"], f["metadata_source"], f["inbox_ref"]) == ("default", "techichi", "operator")
 assert (f["worktrees"], f["helper_cwd"], f["relay_cwd"]) == (H / "worktrees", H, H / "relay")
-assert pol["skills"] == {"worker": "techichi-worker", "planner": "techichi-planner", "relay": "techichi-relay"}
+assert pol["skills"] == {"worker": "techichi-worker", "planner": "techichi-planner", "relay": "techichi-relay",
+                         "reviewer": "techichi-reviewer"}
 assert (pol["spawn"], pol["hold"], pol["route"]["inbox"]) == ({"max_active": 0, "gap_seconds": 30}, {"notify_after_minutes": 60}, ["planner"])
+assert pol["route"]["review"] == ["reviewer"]
 assert pol["projects"]["APP"]["repo"] == str(Path.home() / "app") and pol["projects"]["APP"]["setup"] == []
 assert "slack" not in pol  # no [slack]: no relay
 # The policy values win over the defaults, key by key. Paths expand.
@@ -95,10 +97,11 @@ assert fire(H, HERDR_PANE_ID="w1:p1")  # herdr sets no HERDR_SESSION in the defa
 os.remove(H / "registry.db")
 assert fire(H, HERDR_PANE_ID="w1:p1", HERDR_SESSION="default")
 
-# The skill render: paths filled in, the name from [skills], the extra appended. Worker and planner get links.
+# The skill render: paths filled in, the name from [skills], the extra appended. All but the relay get links.
 (H / "extra").mkdir()
 (H / "extra/worker.md").write_text("## Local rules\n\n- The operator is Sam.\n")
-pol = {**config.policy(), "skills": {"worker": "my-worker", "planner": "my-planner", "relay": "my-relay", "extra": "extra"}}
+pol = {**config.policy(), "skills": {"worker": "my-worker", "planner": "my-planner", "relay": "my-relay",
+                                     "reviewer": "my-reviewer", "extra": "extra"}}
 with contextlib.redirect_stdout(io.StringIO()):
     install.skills(pol)
 w = (H / "skills/my-worker/SKILL.md").read_text()
@@ -109,6 +112,9 @@ assert f"python3 {config.HERE}/plan.py claim-role" in p and "Local rules" not in
 claude = Path(os.environ["CLAUDE_CONFIG_DIR"])
 assert (claude / "skills/my-worker").resolve() == (H / "skills/my-worker").resolve()
 assert (claude / "skills/my-planner").is_symlink() and not (claude / "skills/my-relay").exists()  # relay: by path only
+r = (H / "skills/my-reviewer/SKILL.md").read_text()
+assert r.startswith("---\nname: my-reviewer\n") and f"{H}/reviews/" in r and "{home}" not in r
+assert (claude / "skills/my-reviewer").resolve() == (H / "skills/my-reviewer").resolve()
 with contextlib.redirect_stdout(io.StringIO()):
     install.skills(pol)  # again: the links stay
 print("ok")

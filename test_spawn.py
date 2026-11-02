@@ -165,4 +165,48 @@ except RuntimeError:
 assert ("tab", "close", "w14:t3") in calls and not any(c[:2] == ("workspace", "close") for c in calls)
 herdr.run, herdr.start_agent = real_run, real_start
 
+# spawn_review: a fork PR and an unknown repo stop before any row. Else the PR head goes into its own worktree,
+# with a reviewer Session, a review and a branch Link, and the first prompt.
+import json  # noqa: E402
+URL = "https://github.com/acme/app/pull/5"
+d = tempfile.mkdtemp()
+db = Path(d, "r.db")
+pol = config.policy()
+pol = {**pol, "projects": {**pol["projects"], "APP": {**pol["projects"]["APP"], "repo": d}}}  # no real checkout
+pr, cmds, made, prompts = {"number": 5, "headRefName": "feature/x", "isCrossRepository": True}, [], [], []
+saved = herdr.worktree_create, herdr.start_agent, herdr.wait_ready, herdr.prompt, spawn.run
+spawn.run = lambda cmd, **kw: cmds.append(cmd) or (json.dumps(pr) if cmd[1:3] == ["pr", "view"] else "")
+herdr.worktree_create = lambda *a: made.append(a) or ("wR:p1", "wR", d)
+herdr.start_agent = lambda *a, **k: made.append(("start",) + a)
+herdr.wait_ready = lambda pane: True
+herdr.prompt = lambda pane, text: prompts.append((pane, text))
+for url, why in ((URL, "fork PRs are not supported"), ("https://github.com/other/repo/pull/1", "not a PR of a policy repo")):
+    try:
+        spawn.spawn_review(url, pol=pol, db=db)
+        raise AssertionError(f"no error for {url}")
+    except ValueError as e:
+        assert why in str(e), e
+con = registry.connect(db)
+assert con.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0
+pr["isCrossRepository"] = False
+out = spawn.spawn_review(URL, pol=pol, db=db)
+assert [config.GIT, "-C", d, "fetch", "--quiet", "origin", "feature/x"] in cmds
+assert made[0] == (d, "review-5", "origin/feature/x", pol["factory"]["worktrees"] / "review-app-5", "review-app-5")
+assert made[1][1:3] == ("review-app-5", "wR:p1")
+row = con.execute("SELECT role, project, cwd, branch, pane_id, workspace_id, state FROM sessions WHERE session_id = ?",
+                  (out["session_id"],)).fetchone()
+assert tuple(row) == ("reviewer", "APP", d, "review-5", "wR:p1", "wR", "registered")
+assert {tuple(r) for r in con.execute("SELECT kind, ref, created_by FROM links")} == {
+    ("review", URL, "spawner"), ("branch", "review-5", "spawner")}
+assert prompts == [("wR:p1", f"[factory] Review request: {URL}. Load the techichi-reviewer skill. Review the PR per "
+                             "that skill. The PR head is checked out in this directory on branch review-5.")]
+# A failed prepare ends the Session.
+herdr.worktree_create = lambda *a: 1 / 0
+try:
+    spawn.spawn_review(URL, pol=pol, db=db)
+except ZeroDivisionError:
+    pass
+assert con.execute("SELECT count(*) FROM sessions WHERE role = 'reviewer' AND state = 'ended'").fetchone()[0] == 1
+herdr.worktree_create, herdr.start_agent, herdr.wait_ready, herdr.prompt, spawn.run = saved
+
 print("ok")

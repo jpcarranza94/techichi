@@ -29,9 +29,10 @@ def _defaults():
                     "harness": "claude"},
         "harness": {},  # [harness.<name>] args = [...]: extra start args for one harness
         "sources": {},  # [sources.<name>] command = [...]: a command Source
-        "skills": {"worker": "techichi-worker", "planner": "techichi-planner", "relay": "techichi-relay"},
+        "skills": {"worker": "techichi-worker", "planner": "techichi-planner", "relay": "techichi-relay",
+                   "reviewer": "techichi-reviewer"},
         "route": {"ticket": ["coordinator", "worker"], "pr": ["worker", "coordinator"],
-                  "slack": ["worker", "coordinator"], "inbox": ["planner"]},
+                  "slack": ["worker", "coordinator"], "inbox": ["planner"], "review": ["reviewer"]},
         "hold": {"notify_after_minutes": 60},
         "spawn": {"max_active": 0, "gap_seconds": 30},  # 0: nothing spawns until the policy sets a cap
         "cleanup": {"done_statuses": ["Done"]},

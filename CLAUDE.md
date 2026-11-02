@@ -15,7 +15,7 @@ Each module owns one concept. Put new code in the module that owns its concept.
 | `command_source.py` | The command Source: runs a program that prints Events and checks each line |
 | `router.py` | The Router: `route()`, `admit()`, and the Delivery wrapper. Pure: it reads, it never writes |
 | `daemon.py` | One pass (`process`), the planner and the relay lifecycle, the herdr sync, and the event loop |
-| `spawn.py` | The spawner for workers and helper Sessions |
+| `spawn.py` | The spawner for workers, reviewers, and helper Sessions |
 | `github_source.py`, `jira_source.py`, `slack_source.py` | The Sources. Each one reads a system and inserts Events |
 | `factory.py`, `plan.py` | The operator commands: `claim`, `status`, `cleanup`, and the plan table |
 | `hooks/*.py` | The five Recorders |

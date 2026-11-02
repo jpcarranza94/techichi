@@ -29,9 +29,11 @@ def migrate_sessions(con, schema):
 
     The order is the SQLite one: create new, copy, drop old, rename new. Renaming the old table first would
     move the foreign keys of links and events to the old name."""
+    roles = re.search(r"CHECK \(role IN \(([^)]*)\)", schema)[1].split(",")  # 'worker', 'coordinator', ...
+
     def stale():
         row = con.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sessions'").fetchone()
-        return row and "'planner'" not in row[0]
+        return row and any(r not in row[0] for r in roles)
     if not stale():
         return
     create = re.search(r"CREATE TABLE IF NOT EXISTS sessions \(.*?\n\);", schema, re.S)[0]
@@ -124,9 +126,10 @@ def link(con, kind, ref, sid, created_by):
 
 
 def slots_used(con):
-    """Spawned workers that hold a slot: a spawner ticket Link and a Session that is registered or live."""
+    """Spawned workers and reviewers that hold a slot: a spawner ticket or review Link, and a Session that is
+    registered or live."""
     return con.execute("SELECT count(DISTINCT s.session_id) FROM sessions s JOIN links l USING (session_id) "
-                       "WHERE l.kind = 'ticket' AND l.created_by = 'spawner' "
+                       "WHERE l.kind IN ('ticket','review') AND l.created_by = 'spawner' "
                        "AND s.state IN ('registered','live')").fetchone()[0]
 
 

@@ -295,4 +295,28 @@ try:
     raise AssertionError("no Session")
 except ValueError:
     pass
+
+# --- a spawned reviewer: its review Link selects it for both cleanups, counts as a PR, and shows in status ---
+RV, PR5 = "bbbbbbbb-0000-0000-0000-000000000002", "https://github.com/acme/app/pull/5"
+con.execute("INSERT INTO sessions (session_id, role, project, cwd, workspace_id, agent_status, state) "
+            "VALUES (?, 'reviewer', 'APP', '/wt/review-app-5', 'wV', 'idle', 'live')", (RV,))
+registry.link(con, "review", PR5, RV, "spawner")
+rv = lambda: con.execute("SELECT * FROM sessions WHERE session_id = ?", (RV,)).fetchone()
+state.update(pr=True, clean=True)
+assert f.done(con, pol, rv(), T0) == (False, "idle clock started")  # not "no PR"
+state["pr"] = False
+assert f.done(con, pol, rv(), T61) == (False, f"{PR5} open")
+assert any(line.startswith(f"  {RV[:8]} reviewer") and "PR 5 " in line for line in f.status(con, pol, names={}).splitlines())
+checked.clear()
+f.done = lambda con_, pol_, s_, now: (checked.append(s_["session_id"]), (False, "test"))[1]
+con.execute("DELETE FROM cursors WHERE source = 'cleanup:last'")
+f.auto_cleanup(con, pol, now="2026-10-28T12:00:00Z")
+assert RV in checked
+f.done = real_done
+acted, real_action = [], f.cleanup_action
+f.cleanup_action = lambda con_, pol_, s_: acted.append(s_["session_id"])
+con.execute("UPDATE sessions SET state = 'gone' WHERE session_id = ?", (RV,))
+f.cleanup_closed(con, pol, {RV})  # its workspace wV is closed
+assert acted == [RV]
+f.cleanup_action = real_action
 print("ok")

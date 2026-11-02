@@ -16,6 +16,7 @@ The factory is a small Python daemon for macOS and Linux. It uses only the Pytho
 4. Comments, reviews, and pushes on the ticket and its pull requests become Events.
 5. The daemon sends each Event to its session as one short prompt with a link. The session reads the item at its link.
 6. When a session needs you, it asks with the question tool of its harness. herdr marks the pane `blocked`, so a herdr client or a phone client such as Ovis can notify you. The daemon holds new items for that session until you answer.
+7. When someone asks you to review a pull request in a project repo on GitHub, the spawner starts a reviewer session on the PR head. It writes an overview and a review, and it asks you what to post.
 
 ## Prerequisites
 
@@ -27,7 +28,7 @@ The factory is a small Python daemon for macOS and Linux. It uses only the Pytho
 | A coding agent | Claude Code 2.1.312 or later, or Pi 1.4.0 or later | See "Harness" below. |
 | herdr integration of that agent | `herdr integration install claude` or `herdr integration install pi` | herdr reports the session id of each pane. The daemon matches sessions by this id. |
 | git | 2.30 or later, with an `origin` remote that you can fetch | The spawner makes one worktree per ticket. Any git host works: GitHub, GitLab, Gitea, or your own. |
-| GitHub CLI (optional) | `gh auth login` done, with the `repo` and `notifications` scopes | Only for a project with `github`. The GitHub Source reads notifications. The spawner reads the default branch and open PRs. The cleanup reads the PR state. |
+| GitHub CLI (optional) | `gh auth login` done, with the `repo` and `notifications` scopes | Only for a project with `github`. The GitHub Source reads notifications and the review requests of a PR. The spawner reads the default branch, open PRs, and the head of a PR to review. The cleanup reads the PR state. |
 | Jira Cloud token (optional) | A scoped API token with `read:jira-work` and `read:jira-user` | The Jira Source reads only. Without Jira, remove `[jira]` from the policy. |
 | Slack (optional) | Claude Code (also when your workers use Pi) with the Slack connector of claude.ai: `slack_search_public_and_private`, `slack_read_thread`, `slack_send_message` | A relay session reads Slack. It needs Claude Code. Without it, remove `[slack]` from the policy. |
 | A start skill | See "Start skill" below | The work on each ticket. |
@@ -67,7 +68,7 @@ Do these steps in order. Run the commands in a shell inside herdr.
    python3 ~/techichi/install.py
    ```
 
-   It renders the skills into `~/.config/techichi/skills/`. For Claude Code, it also adds five hooks to `~/.claude/settings.json`, keeps a backup next to it, and links the worker and the planner skill into `~/.claude/skills/`. Pi gets the skill folder on its start line, so nothing goes into `~/.pi`. On macOS it writes `~/.config/techichi/techichi.plist`. On Linux it writes `~/.config/systemd/user/techichi.service`. A bad policy stops the install with one line that names the missing key.
+   It renders the skills into `~/.config/techichi/skills/`. For Claude Code, it also adds five hooks to `~/.claude/settings.json`, keeps a backup next to it, and links the worker, the planner, and the reviewer skill into `~/.claude/skills/`. Pi gets the skill folder on its start line, so nothing goes into `~/.pi`. On macOS it writes `~/.config/techichi/techichi.plist`. On Linux it writes `~/.config/systemd/user/techichi.service`. A bad policy stops the install with one line that names the missing key.
 
 6. Do one pass by hand. Read the output for errors:
 

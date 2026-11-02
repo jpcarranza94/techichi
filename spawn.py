@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Start one worker Session for one ticket, or a helper Session. See DESIGN.md section "Spawn"."""
+"""Start one worker Session for one ticket, one reviewer Session for one PR, or a helper Session.
+See DESIGN.md section "Spawn"."""
 import argparse
 import json
 import re
@@ -72,11 +73,11 @@ def existing_work(key, p):
     return found
 
 
-def project_of(con, key):
-    """The project of a ticket: payload.project of its newest admission Event, else the key prefix (Jira)."""
-    r = con.execute("SELECT json_extract(payload, '$.project') FROM events WHERE kind = 'ticket' AND ref = ? "
-                    "AND json_extract(payload, '$.admitted') ORDER BY created_at DESC LIMIT 1", (key,)).fetchone()
-    return (r and r[0]) or key.split("-")[0].upper()
+def project_of(con, ref, kind="ticket"):
+    """payload.project of the newest admission Event of a Ref, or None."""
+    r = con.execute("SELECT json_extract(payload, '$.project') FROM events WHERE kind = ? AND ref = ? "
+                    "AND json_extract(payload, '$.admitted') ORDER BY created_at DESC LIMIT 1", (kind, ref)).fetchone()
+    return r and r[0]
 
 
 def spawn(key, slug=None, pol=None, db=None):
@@ -84,7 +85,7 @@ def spawn(key, slug=None, pol=None, db=None):
     branch = f"{key}-{slug}" if slug else key
     sid = str(uuid.uuid4())
     con = registry.connect(db)
-    project = project_of(con, key)
+    project = project_of(con, key) or key.split("-")[0].upper()  # else the key prefix (Jira)
     p = pol["projects"][project]
 
     # 0. Pre-check, before any row or worktree. A plan row with hold = 0 means the operator approved the start.
@@ -116,12 +117,12 @@ def spawn(key, slug=None, pol=None, db=None):
     return out
 
 
-def _prepare(key, p, project, branch, sid, con, pol):
-    # 2. Default branch from GitHub, or from the HEAD of origin.
-    if "github" in p:
+def _prepare(key, p, project, branch, sid, con, pol, base=None, role="worker"):
+    # 2. Default branch from GitHub, or from the HEAD of origin. A reviewer passes the PR head as the base.
+    if not base and "github" in p:
         base = run([config.GH, "repo", "view", p["github"], "--json", "defaultBranchRef",
                     "-q", ".defaultBranchRef.name"]).strip()
-    else:  # "ref: refs/heads/main\tHEAD"
+    elif not base:  # "ref: refs/heads/main\tHEAD"
         base = run([config.GIT, "-C", p["repo"], "ls-remote", "--symref", "origin", "HEAD"]).split("\t")[0].split("refs/heads/")[1]
     run([config.GIT, "-C", p["repo"], "fetch", "--quiet", "origin", base])
 
@@ -142,9 +143,43 @@ def _prepare(key, p, project, branch, sid, con, pol):
     # 5. Agent of the project's harness. spawn() then polls for readiness. The agent name is the lowercase key.
     name = harness.of_project(pol, project)
     herdr.start_agent(key.lower(), pane, harness.HARNESSES[name]["kind"],
-                      harness.start_args(name, sid, pol, [skill_dir(pol, "worker")]))
+                      harness.start_args(name, sid, pol, [skill_dir(pol, role)]))
     return {"session_id": sid, "project": project, "branch": branch, "cwd": cwd,
             "pane_id": pane, "workspace_id": ws, "copied": copied}
+
+
+def spawn_review(url, pol=None, db=None):
+    """Start a reviewer Session on the head of a PR that someone asked the operator to review."""
+    pol = pol or config.policy()
+    con = registry.connect(db)
+    m = re.fullmatch(r"https://github\.com/([\w.-]+)/([\w.-]+)/pull/(\d+)", url)
+    repo = f"{m[1]}/{m[2]}".lower() if m else None
+    project = project_of(con, url, "review") or next(
+        (k for k, p in pol["projects"].items() if "github" in p and p["github"].lower() == repo), None)
+    if not m or project not in pol["projects"]:
+        raise ValueError(f"{url} is not a PR of a policy repo")
+    p, n = pol["projects"][project], m[3]
+    pr = json.loads(run([config.GH, "pr", "view", url, "--json", "number,headRefName,isCrossRepository"]))
+    if pr["isCrossRepository"]:
+        # ponytail: the head lives in the author's fork, not in origin. Fetch refs/pull/<n>/head if forks matter.
+        raise ValueError(f"{url}: fork PRs are not supported")
+    name, branch, sid = f"review-{m[2].lower()}-{n}", f"review-{n}", str(uuid.uuid4())
+
+    # Identity before execution.
+    con.execute("INSERT INTO sessions (session_id, role, project, state) VALUES (?, 'reviewer', ?, 'registered')",
+                (sid, project))
+    registry.link(con, "review", url, sid, "spawner")
+    try:
+        out = _prepare(name, p, project, branch, sid, con, pol, base=pr["headRefName"], role="reviewer")
+    except Exception:
+        end(con, sid)  # as in spawn(): a dead registered Session would hold its Events forever
+        raise
+    pane = out["pane_id"]
+    if not herdr.wait_ready(pane):
+        raise TimeoutError(f"agent in {pane} not ready after 120 s. Session {sid} stays registered.")
+    herdr.prompt(pane, f"[factory] Review request: {url}. Load the {pol['skills']['reviewer']} skill. "
+                       f"Review the PR per that skill. The PR head is checked out in this directory on branch {branch}.")
+    return out
 
 
 def skill_dir(pol, role):

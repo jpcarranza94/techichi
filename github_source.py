@@ -51,9 +51,10 @@ def pr_ref(subject_url):
     return f"https://github.com/{m[1]}/pull/{m[2]}" if m else None
 
 
-def activities(note, since, fetch=gh_all, login=me):
+def activities(note, since, fetch=gh_all, login=me, project=None):
     """One Event per activity on the PR of a notification, from `since` up to the notification's updated_at.
-    An edit or a CI run changes updated_at but adds no activity, so it makes no Event."""
+    An edit or a CI run changes updated_at but adds no activity, so it makes no Event.
+    A review request for the operator is an admitted review Event of `project`: it starts a reviewer."""
     # ponytail: CI failures do not reach a session yet. Add them when a session needs them after its own run ends.
     m = re.fullmatch(r"https://api\.github\.com/repos/([\w.-]+/[\w.-]+)/pulls/(\d+)", note["subject"].get("url") or "")
     if not m:
@@ -64,11 +65,11 @@ def activities(note, since, fetch=gh_all, login=me):
     def new(t):
         return bool(t) and since <= t <= until
 
-    def ev(kind, id_, what, user, at, url):
+    def ev(kind, id_, what, user, at, url, ref_kind="pr", **more):
         actor = (user or {}).get("login") or "unknown"
-        return {"id": f"gh:{kind}:{id_}", "source": "github", "kind": "pr", "ref": ref,
+        return {"id": f"gh:{kind}:{id_}", "source": "github", "kind": ref_kind, "ref": ref,
                 "payload": {"what": what, "actor": actor, "at": at, "url": url or ref,
-                            "self": actor == login(), "admitted": False}}
+                            "self": actor == login(), "admitted": False, **more}}
 
     out = []
     for c in fetch(f"{base}/issues/{m[2]}/comments?since={since}&{page}"):
@@ -86,6 +87,12 @@ def activities(note, since, fetch=gh_all, login=me):
         at = ((c.get("commit") or {}).get("committer") or {}).get("date")
         if new(at):
             out.append(ev("commit", c["sha"], "push", c.get("author"), at, c.get("html_url")))
+    if note.get("reason") == "review_requested":  # a team request names no requested_reviewer: no Event
+        for e in fetch(f"{base}/issues/{m[2]}/events?{page}"):
+            if (e.get("event") == "review_requested" and (e.get("requested_reviewer") or {}).get("login") == login()
+                    and new(e.get("created_at"))):
+                out.append(ev("review_request", e["id"], "review requested", e.get("review_requester"), e["created_at"],
+                              ref, "review", admitted=True, project=project))
     return out
 
 
@@ -114,12 +121,12 @@ def poll(con, pol, dry_run=False, since=None, fetch=gh_all, login=me, list_fn=No
         if len(batch) < PER_PAGE or page >= MAX_PAGES:
             break
         page += 1
-    repos = {p["github"].lower() for p in pol["projects"].values() if "github" in p}
+    repos = {p["github"].lower(): k for k, p in pol["projects"].items() if "github" in p}
     n = 0
     for note in notes:
         if note["subject"]["type"] != "PullRequest" or note["repository"]["full_name"].lower() not in repos:
             continue
-        evs = activities(note, since, fetch, login)
+        evs = activities(note, since, fetch, login, repos[note["repository"]["full_name"].lower()])
         # A harness with no recorder writes no pr Link, so the daemon links the PR by its head branch.
         # Only then is the extra read worth it: with every harness recording, the payload stays as before.
         if evs and not all(harness.HARNESSES[n]["recorder"] for n in harness.in_use(pol)):

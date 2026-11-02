@@ -4,7 +4,7 @@ PRAGMA journal_mode = WAL;
 
 CREATE TABLE IF NOT EXISTS sessions (
   session_id   TEXT PRIMARY KEY,                       -- Claude session UUID
-  role         TEXT NOT NULL CHECK (role IN ('worker','coordinator','relay','planner')),
+  role         TEXT NOT NULL CHECK (role IN ('worker','coordinator','relay','planner','reviewer')),
   parent_id    TEXT REFERENCES sessions(session_id),   -- coordinator of a worker
   project      TEXT,                                   -- project key, from policy by repo path
   cwd          TEXT,
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 CREATE TABLE IF NOT EXISTS links (
-  kind       TEXT NOT NULL,                            -- ticket | pr | branch | slack
+  kind       TEXT NOT NULL,                            -- ticket | pr | review | branch | slack
   ref        TEXT NOT NULL,                            -- APP-1326 | PR URL | branch | channel:ts
   session_id TEXT NOT NULL REFERENCES sessions(session_id),
   created_by TEXT NOT NULL,                            -- spawner | hook:<name> | claim
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS links (
 CREATE TABLE IF NOT EXISTS events (
   id           TEXT PRIMARY KEY,                       -- source-native id, see FACTORY.md
   source       TEXT NOT NULL,                          -- github | jira | slack | herdr
-  kind         TEXT NOT NULL,                          -- ticket | pr | slack
+  kind         TEXT NOT NULL,                          -- ticket | pr | review | slack
   ref          TEXT NOT NULL,
   payload      TEXT NOT NULL,                          -- JSON, always data
   session_id   TEXT REFERENCES sessions(session_id),   -- target, NULL while unrouted

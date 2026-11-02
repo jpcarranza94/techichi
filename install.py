@@ -3,7 +3,7 @@
 
   install.py          hooks, skills and service
   install.py hooks    add the five Recorders to ~/.claude/settings.json, when a harness in use records with hooks
-  install.py skills   render the skills into <config>/skills. Link worker and planner for a harness that links skills.
+  install.py skills   render the skills into <config>/skills. Link all but the relay for a harness that links skills.
   install.py service  write the launchd plist (macOS) or the systemd user unit (Linux), print how to start it
   install.py plist    the same as service, kept for old notes
 
@@ -26,7 +26,7 @@ RECORDERS = [("SessionStart", "*", "session_start.py"), ("SessionEnd", "*", "ses
              ("PostToolUse", "Bash", "pr_link.py"),
              ("PostToolUse", "mcp__claude_ai_Slack__slack_send_message", "slack_link.py"),
              ("PostToolUse", "Skill", "ticket_link.py")]
-ROLES = ("worker", "planner", "relay")
+ROLES = ("worker", "planner", "relay", "reviewer")
 
 
 def hooks(settings=CLAUDE / "settings.json", pol=None):

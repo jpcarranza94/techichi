@@ -87,7 +87,7 @@ def status(con, pol, names=None):
     for s in rows:
         links = con.execute("SELECT kind, ref FROM links WHERE session_id = ? ORDER BY kind, ref", (s["session_id"],)).fetchall()
         tickets = ",".join(r["ref"] for r in links if r["kind"] == "ticket") or "-"
-        prs = ",".join(r["ref"].rsplit("/", 1)[-1] for r in links if r["kind"] == "pr") or "-"
+        prs = ",".join(r["ref"].rsplit("/", 1)[-1] for r in links if r["kind"] in ("pr", "review")) or "-"
         held = con.execute("SELECT count(*) FROM events WHERE status = 'held' AND session_id = ?", (s["session_id"],)).fetchone()[0]
         who = names.get(s["session_id"]) or s["pane_id"] or "-"
         out.append(f"  {s['session_id'][:8]} {s['role']:<11} {who:<20} {s['state']:<10} {s['agent_status'] or '-':<8} "
@@ -142,7 +142,8 @@ def clean(cwd):
 
 
 def done(con, pol, s, now):
-    """Return (True, '') when a spawned worker's work is really done. Any failed condition resets the idle clock."""
+    """Return (True, '') when a spawned worker's or reviewer's work is really done. Any failed condition resets the
+    idle clock. A reviewer's review Link counts as a PR."""
     key = f"cleanup:{s['session_id']}"
 
     def no(why):
@@ -153,7 +154,7 @@ def done(con, pol, s, now):
         return no(f"agent {s['agent_status']}")
     links = con.execute("SELECT kind, ref FROM links WHERE session_id = ?", (s["session_id"],)).fetchall()
     tickets = [r["ref"] for r in links if r["kind"] == "ticket"]
-    prs = [r["ref"] for r in links if r["kind"] == "pr"]
+    prs = [r["ref"] for r in links if r["kind"] in ("pr", "review")]
     for t in tickets:
         if not jira_ticket(con, pol, t):
             continue  # another Source admitted it: the PRs, the idle time and the clean checkout decide
@@ -200,8 +201,8 @@ def scratch_worktrees(repo, cwd, sid, name):
 
 def cleanup_action(con, pol, s):
     """Remove the checkouts, the workspace and the branch, then end the Session. Stop at the first failure."""
-    ticket = (con.execute("SELECT ref FROM links WHERE kind = 'ticket' AND session_id = ?", (s["session_id"],)).fetchone()
-              or ["-"])[0]
+    ticket = (con.execute("SELECT ref FROM links WHERE kind IN ('ticket','review') AND session_id = ?",  # a reviewer: the PR
+                          (s["session_id"],)).fetchone() or ["-"])[0]
     project = s["project"] or registry.project_for_cwd(s["cwd"] or ".", pol)
     repo = pol["projects"][project]["repo"] if project in pol["projects"] else None
 
@@ -286,8 +287,8 @@ def cleanup_closed(con, pol, gone_before):
     workspaces with their ids, so a restored workspace counts as open. One try for each Session: a stop writes
     one log line, and factory.py cleanup KEY can try again."""
     rows = [s for s in con.execute("SELECT DISTINCT s.* FROM sessions s JOIN links l USING (session_id) WHERE s.role IN "
-                                   "('worker','coordinator') AND s.state IN ('gone','ended') AND l.kind = 'ticket' "
-                                   "AND l.created_by = 'spawner'").fetchall()
+                                   "('worker','coordinator','reviewer') AND s.state IN ('gone','ended') "
+                                   "AND l.kind IN ('ticket','review') AND l.created_by = 'spawner'").fetchall()
             if s["session_id"] in gone_before and s["workspace_id"] and checkout_left(s)
             and not registry.cursor(con, f"closed:{s['session_id']}")]
     if not rows:
@@ -301,7 +302,8 @@ def cleanup_closed(con, pol, gone_before):
 
 
 def auto_cleanup(con, pol, now=None):
-    """The daemon's check, at most every 10 minutes. Only spawned workers. Also ends Sessions gone for 24 hours."""
+    """The daemon's check, at most every 10 minutes. Only spawned workers and reviewers. Also ends Sessions gone
+    for 24 hours."""
     now = now or registry.now()
     if not registry.due(con, "cleanup:last", EVERY, at=now):
         return
@@ -309,8 +311,8 @@ def auto_cleanup(con, pol, now=None):
     con.execute(f"UPDATE sessions SET state = 'ended', ended_at = {NOW} WHERE state = 'gone' "
                 "AND coalesce(last_seen, created_at) < strftime('%Y-%m-%dT%H:%M:%SZ', ?, '-24 hours')", (now,))
     for s in con.execute("SELECT DISTINCT s.* FROM sessions s JOIN links l USING (session_id) WHERE s.role IN "
-                         "('worker','coordinator') AND s.state = 'live' AND l.kind = 'ticket' AND l.created_by = 'spawner'"
-                         ).fetchall():
+                         "('worker','coordinator','reviewer') AND s.state = 'live' AND l.kind IN ('ticket','review') "
+                         "AND l.created_by = 'spawner'").fetchall():
         try:
             ok, why = done(con, pol, s, now)
         except Exception as e:

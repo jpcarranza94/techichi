@@ -17,7 +17,7 @@ def never(*a):
 
 
 # No test may reach herdr, git or gh through a default Action.
-daemon.prompt_action = daemon.spawn_action = daemon.planner_action = daemon.relay_action = never
+daemon.prompt_action = daemon.spawn_action = daemon.review_action = daemon.planner_action = daemon.relay_action = never
 con = registry.connect(Path(tempfile.mkdtemp(), "r.db"))
 
 
@@ -352,4 +352,50 @@ con.execute("UPDATE sessions SET agent_status = 'idle' WHERE session_id = 'wk'")
 daemon.process(con, pol, prompt=lambda pane, text: batch.append((pane, text)), spawn=never, start_planner=never)
 mine = [t for p, t in batch if p == "p-wk"]
 assert len(mine) == 1 and mine[0].startswith("[factory] 3 items for") and status("e-wk1")[0] == "delivered"
+
+# Reviews: no plan and no planner. A free slot spawns a reviewer through the review Action, and the reviewer
+# holds a slot. With no free slot the request waits with reason capacity.
+con.execute("UPDATE events SET status = 'dropped' WHERE status IN ('queued','held','unrouted')")
+PR = "https://github.com/acme/app/pull/5"
+event("rv1", "review", PR, what="review requested", actor="alice", admitted=True, project="APP")
+used = registry.slots_used(con)
+pol["spawn"]["max_active"] = used
+assert daemon.route(con, ev("rv1"), pol) == ("queued", None, "capacity")
+pol["spawn"]["max_active"] = used + 1
+assert daemon.route(con, ev("rv1"), pol) == ("spawn", None, None)
+reviews = []
+
+
+def fake_review(url):
+    reviews.append(url)
+    session("rv", role="reviewer", state="registered")
+    registry.link(con, "review", url, "rv", "spawner")
+    return "rv"
+
+
+daemon.review_action = fake_review
+run(never, prompt=never, start_planner=never)
+assert reviews == [PR] and status("rv1") == ("delivered", "rv", "first-prompt") and registry.slots_used(con) == used + 1
+# A new request on the same PR goes to the reviewer: held while it starts or works, delivered when it is idle.
+event("rv2", "review", PR, what="review requested", actor="bob", admitted=True, project="APP")
+run(never, prompt=never, start_planner=never)
+assert status("rv2") == ("held", "rv", "registered") and reviews == [PR]
+con.execute("UPDATE sessions SET state = 'live', agent_status = 'working' WHERE session_id = 'rv'")
+run(never, prompt=never, start_planner=never)
+assert status("rv2") == ("held", "rv", "working")
+con.execute("UPDATE sessions SET agent_status = 'idle' WHERE session_id = 'rv'")
+notes = []
+run(never, prompt=lambda pane, text: notes.append((pane, text)), start_planner=never)
+assert status("rv2")[:2] == ("delivered", "rv") and [p for p, _ in notes] == ["p-rv"]
+text = notes[0][1]
+assert text.startswith("[factory] 1 item for PR 5.\n- test review 5: review requested by bob,"), text
+assert text.endswith("Handle it per the techichi-reviewer skill.")
+# A failed review spawn stays unrouted. It does not go to the planner.
+event("rv3", "review", "https://github.com/acme/app/pull/6", what="review requested", admitted=True, project="APP")
+pol["spawn"]["max_active"] += 1
+daemon.review_action = lambda url: 1 / 0
+started.clear()
+run(never, prompt=never)
+assert status("rv3")[0] == "unrouted" and status("rv3")[2].startswith("spawn failed") and not started
+daemon.review_action = never
 print("ok")

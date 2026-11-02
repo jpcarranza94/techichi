@@ -13,10 +13,11 @@ helper_cwd      = "~/code"                      # the planner's cwd. The coding 
 
 [skills]
 # The names that prompts use. `install.py skills` renders the core templates with these names.
-worker  = "techichi-worker"
-planner = "techichi-planner"
-relay   = "techichi-relay"
-# extra = "skills-extra"                        # a folder in the config dir with worker.md, planner.md, relay.md to append
+worker   = "techichi-worker"
+planner  = "techichi-planner"
+relay    = "techichi-relay"
+reviewer = "techichi-reviewer"                  # reviews a PR that someone asked you to review
+# extra = "skills-extra"                        # a folder in the config dir with worker.md, planner.md, relay.md, reviewer.md to append
 
 # One table per project. The key is the ticket key prefix, for example the Jira project key.
 # Required: repo and start. Optional: github, admit, setup, harness.
@@ -51,12 +52,13 @@ ticket = ["coordinator", "worker"]
 pr     = ["worker", "coordinator"]
 slack  = ["worker", "coordinator"]
 inbox  = ["planner"]
+review = ["reviewer"]
 
 [hold]
 notify_after_minutes = 60
 
 [spawn]
-max_active  = 3   # spawned workers at the same time. Each one is a full coding agent session.
+max_active  = 3   # spawned workers and reviewers at the same time. Each one is a full coding agent session.
 gap_seconds = 30  # between two agent starts. Simultaneous starts can race on the config files of the agent.
 
 # Remove this table to run without Jira.

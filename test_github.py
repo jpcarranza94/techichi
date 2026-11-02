@@ -165,4 +165,30 @@ try:
 finally:
     config.GH = real_gh
 assert [e["id"] for e in got] == ["gh:review:999"] and got[0]["payload"]["actor"] == CR
+
+# Review requests: one admitted review Event for each request of the operator in the window. A request for someone
+# else, a team request, and an old request make none. A request by the operator is self.
+EVS = [{"id": i, "event": "review_requested", "created_at": at, "review_requester": user(by), **who}
+       for i, at, by, who in ((81, "2026-10-28T15:40:00Z", "alice", {"requested_reviewer": user(ME)}),
+                              (82, "2026-10-28T15:40:00Z", "alice", {"requested_reviewer": user("bob")}),
+                              (83, "2026-10-28T15:40:00Z", "alice", {"requested_team": {"slug": "core"}}),
+                              (84, "2026-10-28T12:00:00Z", "alice", {"requested_reviewer": user(ME)}),
+                              (85, "2026-10-28T15:41:00Z", ME, {"requested_reviewer": user(ME)}))]
+EVS.append({"id": 86, "event": "labeled", "created_at": "2026-10-28T15:41:00Z", "actor": user("alice")})
+events = lambda path: EVS if re.fullmatch(r"(?i)repos/acme/(app|web)/issues/5/events\?per_page=100", path) else []
+rr = dict(note("r1", "acme/app", 5, "2026-10-28T15:45:00Z"), reason="review_requested")
+got = g.activities(rr, "2026-10-28T15:30:00Z", events, login, "APP")
+P5 = "https://github.com/acme/app/pull/5"
+assert [e["id"] for e in got] == ["gh:review_request:81", "gh:review_request:85"], got
+assert got[0] == {"id": "gh:review_request:81", "source": "github", "kind": "review", "ref": P5,
+                  "payload": {"what": "review requested", "actor": "alice", "at": "2026-10-28T15:40:00Z", "url": P5,
+                              "self": False, "admitted": True, "project": "APP"}}
+assert got[1]["payload"]["self"] is True
+assert g.activities(note("r2", "acme/app", 5, "2026-10-28T15:45:00Z"), "2026-10-28T15:30:00Z", events, login) == []
+# The poll names the project whose github is the repo, case free.
+with contextlib.redirect_stdout(io.StringIO()) as out:
+    g.poll(con, pol, dry_run=True, since="2026-10-28T15:30:00Z", fetch=events, login=login,
+           list_fn=lambda p: ({}, [dict(note("r3", "ACME/Web", 5, "2026-10-28T15:45:00Z"), reason="review_requested")]))
+got = [json.loads(line) for line in out.getvalue().splitlines()]
+assert {(e["ref"], e["payload"]["project"]) for e in got} == {("https://github.com/ACME/Web/pull/5", "WEB")}, got
 print("ok")
