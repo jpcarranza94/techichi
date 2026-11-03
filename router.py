@@ -2,6 +2,7 @@
 See DESIGN.md sections "Router" and "Delivery". daemon.process() applies their decisions.
 """
 import json
+import re
 
 import registry
 
@@ -65,11 +66,17 @@ def admit(con, ev, pol):
     return "queued", None, "capacity"  # e.
 
 
+def plain(text, n=80):
+    """Source text for the wrapper: letters, digits, and a few marks, on one line, at most n characters.
+    A check name, a field name, or a display name comes from people outside the factory."""
+    return re.sub(r"[^\w .,:/()+#@-]", "", str(text))[:n]
+
+
 def item_line(ev):
     p = json.loads(ev["payload"])
     short = ev["ref"].rstrip("/").rsplit("/", 1)[-1] if ev["kind"] in ("pr", "review") else ev["ref"]
     label = short if ev["kind"] in ("ticket", ev["source"]) else f"{ev['kind']} {short}"
-    return f"- {ev['source']} {label}: {p.get('what', 'update')} by {p.get('actor', '?')}, " \
+    return f"- {ev['source']} {label}: {plain(p.get('what', 'update'))} by {plain(p.get('actor', '?'))}, " \
            f"{p.get('at', ev['created_at'])}, {p.get('url', '')}"
 
 

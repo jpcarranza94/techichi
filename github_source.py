@@ -143,7 +143,11 @@ def checks(con, pol, dry_run=False, view=pr_view):
         m = re.fullmatch(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/\d+", ref)
         if not m or m[1].lower() not in repos:
             continue
-        pr = view(ref)
+        try:
+            pr = view(ref)
+        except Exception as e:  # one PR that fails to read must not stop the others
+            print(f"github checks: {ref}: {str(e)[:200]}", file=sys.stderr, flush=True)
+            continue
         if pr["state"] != "OPEN":
             continue
         sha = pr["headRefOid"]

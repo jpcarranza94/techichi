@@ -80,7 +80,7 @@ A `slack` Ref is `<channel>:<thread_root_ts>`. A Slack Source must key a reply b
 
 The `payload` of an Event is JSON with these keys. Each Source fills them.
 
-- `what`, `actor`, `at`, `url`: the four parts of the item line in the prompt.
+- `what`, `actor`, `at`, `url`: the four parts of the item line in the prompt. The wrapper keeps only letters, digits, spaces, and `.,:/()+#@-` of `what` and `actor`, at most 80 characters each, because people outside the factory name checks, fields, and accounts.
 - `self`: `true` when the actor is the operator. The Router drops the Event.
 - `admitted`: `true` when the project admission rule admits the ticket, or on a review request for the operator. The Router can spawn for it.
 

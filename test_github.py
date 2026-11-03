@@ -237,10 +237,11 @@ with contextlib.redirect_stdout(io.StringIO()) as out:
     assert g.poll(c, pol, dry_run=True, list_fn=lambda p: ({}, []), view=view) == 3
 assert len(out.getvalue().splitlines()) == 3 and c.execute("SELECT count(*) FROM events").fetchone()[0] == 3
 assert g.cursor(c, "github:checks:next") is None
-# A failed check read does not stop the notifications.
+# A failed read of one PR does not stop the other PRs or the notifications.
 c.execute("DELETE FROM cursors WHERE source = 'github:next'")
-listed = []
+c.execute("DELETE FROM cursors WHERE source = 'github:checks:next'")
+listed, reads = [], []
 with contextlib.redirect_stderr(io.StringIO()) as err:
-    g.poll(c, pol, list_fn=lambda p: listed.append(p) or ({}, []), view=lambda u: 1 / 0)
-assert listed and "github checks failed" in err.getvalue()
+    g.poll(c, pol, list_fn=lambda p: listed.append(p) or ({}, []), view=lambda u: 1 / 0 if u == A + "1" else view(u))
+assert listed and sorted(reads) == [A + "2", A + "3"] and f"github checks: {A}1" in err.getvalue()
 print("ok")

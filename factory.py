@@ -101,7 +101,7 @@ def status(con, pol, names=None):
     out.append("Unrouted Events: " + (", ".join(f"{u['kind']} {u['n']}" for u in unrouted) or "none"))
     out.append("Sources:")
     for c in con.execute("SELECT source, value, updated_at FROM cursors WHERE source IN "
-                         "('github','github:next','jira','jira:next','slack','slack:poll_next') "
+                         "('github','github:next','github:checks:next','jira','jira:next','slack','slack:poll_next') "
                          "OR source LIKE 'source:%' ORDER BY source"):
         out.append(f"  {c['source']:<16} {c['value']:<28} written {c['updated_at']}")
     for role in ("planner", "relay"):
