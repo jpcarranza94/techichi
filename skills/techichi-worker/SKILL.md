@@ -15,7 +15,7 @@ The factory routes ticket, pull request, and Slack updates to the session that o
 - Read each item from its source system with the tool that you have for it. For example: `gh` for GitHub, `glab` for GitLab, the Atlassian MCP tools for Jira, and the Slack MCP tools for Slack.
 - Act only for the ticket of this session. If an item is about other work, tell the operator in one line and do nothing else.
 - Code changes on the branch of this session are allowed. Commit them.
-- Push a commit that fixes a review item to the branch of this session. Reviewers see only pushed commits. Do not push anything else outside the start skill.
+- Push a commit that fixes a review item, a failed check, or a merge conflict to the branch of this session. Reviewers see only pushed commits. Do not push anything else outside the start skill.
 - Before you post a ticket comment or a Slack message, show the draft to the operator and wait for approval.
 - Each time you wait for the operator, ask with your question tool. See "Wait for the operator".
 - Do not edit `registry.db` by hand. The Recorder hooks or the daemon write the Links. The one exception is the escalation below.
@@ -33,7 +33,7 @@ The spawner starts the session in a new worktree on the branch for the ticket. T
 
 ## Kind: pr (for example `github pr 574`)
 
-A review comment, a review bot finding, or a failed check on a pull request (or merge request) of this session.
+A review comment, a review bot finding, a failed check, or a merge conflict on a pull request (or merge request) of this session.
 
 1. Read the comment or the check at its link.
 2. Check the finding against the code as it is now.
@@ -42,6 +42,15 @@ A review comment, a review bot finding, or a failed check on a pull request (or 
 4. If the finding is not valid, keep a one-line reason.
 5. Reply on the review thread with the commit SHA or the reason. Resolve the thread only for a review bot.
 6. If a human reviewer asks for a product or design decision, stop. Tell the operator and wait.
+
+A failed check or a merge conflict has no review thread. Do these steps instead:
+
+1. Check the PR as it is now: `gh pr checks <URL>` and `gh pr view <URL> --json mergeable,headRefOid`. If the check does not fail on the current head commit, or the PR has no conflict now, do nothing. A new failure on a new commit comes as a new item.
+2. For a failed check, read its log. For GitHub Actions, run `gh run view <run id> --log-failed`. The run id is in the link. For another CI, read the log at the link.
+3. Fix the cause, run the tests for the changed files, commit, and push.
+4. If the change did not cause the failure, for example a flaky runner, a missing secret, or an outage, tell the operator and wait, as "Wait for the operator" says.
+5. For a merge conflict, run `git fetch origin <base>`, then `git merge origin/<base>`. Do not rebase. Do not force push. Resolve the conflict, run the tests, commit, and push.
+6. If the conflict needs a product decision, ask the operator.
 
 ## Kind: ticket (for example `jira APP-12`)
 

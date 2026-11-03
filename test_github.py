@@ -8,11 +8,13 @@ import os
 import re
 import subprocess
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 
 import github_source as g
 import registry
 
+config.GH = str(testenv.HOME / "no-gh")  # no test reaches GitHub
 pol = config.policy()
 db = testenv.HOME / "registry.db"  # the hook below writes there
 con = registry.connect(db)
@@ -187,8 +189,58 @@ assert got[1]["payload"]["self"] is True
 assert g.activities(note("r2", "acme/app", 5, "2026-10-28T15:45:00Z"), "2026-10-28T15:30:00Z", events, login) == []
 # The poll names the project whose github is the repo, case free.
 with contextlib.redirect_stdout(io.StringIO()) as out:
-    g.poll(con, pol, dry_run=True, since="2026-10-28T15:30:00Z", fetch=events, login=login,
+    g.poll(con, pol, dry_run=True, since="2026-10-28T15:30:00Z", fetch=events, login=login, view=lambda u: {"state": "MERGED"},
            list_fn=lambda p: ({}, [dict(note("r3", "ACME/Web", 5, "2026-10-28T15:45:00Z"), reason="review_requested")]))
 got = [json.loads(line) for line in out.getvalue().splitlines()]
 assert {(e["ref"], e["payload"]["project"]) for e in got} == {("https://github.com/ACME/Web/pull/5", "WEB")}, got
+
+# Checks: failed checks and a conflict on the head of each open PR of a Session that is not ended. Its own timer.
+c = registry.connect(Path(tempfile.mkdtemp(), "c.db"))
+g.set_cursor(c, "github", "2026-10-28T15:00:00Z")
+registry.wait(c, "github:next", timedelta(hours=1))  # the notifications are not due: the checks still run
+A = "https://github.com/acme/app/pull/"
+for sid, state in (("s-a", "live"), ("s-b", "ended"), ("s-r", "live")):
+    c.execute("INSERT INTO sessions (session_id, role, state) VALUES (?, 'worker', ?)", (sid, state))
+for kind, n, sid in (("pr", 1, "s-a"), ("pr", 2, "s-a"), ("pr", 3, "s-a"), ("pr", 5, "s-b"), ("review", 6, "s-r")):
+    registry.link(c, kind, A + str(n), sid, "test")
+registry.link(c, "pr", "https://github.com/other/repo/pull/4", "s-a", "test")
+run = lambda name, conclusion: {"__typename": "CheckRun", "name": name, "status": "COMPLETED", "conclusion": conclusion,
+                                "detailsUrl": f"https://github.com/acme/app/actions/runs/7/job/{name}",
+                                "completedAt": "2026-10-28T16:00:00Z"}
+status = lambda state: {"__typename": "StatusContext", "context": "ci/deploy", "state": state, "targetUrl": "https://ci.example.com/9"}
+PRS = {A + "1": {"state": "OPEN", "headRefOid": "abc123", "baseRefName": "dev", "mergeable": "CONFLICTING",
+                 "statusCheckRollup": [run("test", "FAILURE"), run("lint", "CANCELLED"), run("build", "SUCCESS"), status("ERROR")]},
+       A + "2": {"state": "OPEN", "headRefOid": "def456", "baseRefName": "dev", "mergeable": "UNKNOWN",
+                 "statusCheckRollup": [run("test", "SUCCESS"), status("SUCCESS")]},
+       A + "3": {"state": "CLOSED", "headRefOid": "0f0f0f", "baseRefName": "dev", "mergeable": "CONFLICTING",
+                 "statusCheckRollup": [run("test", "FAILURE")]}}
+reads = []
+view = lambda url: reads.append(url) or PRS[url]
+assert g.poll(c, pol, list_fn=lambda p: 1 / 0, view=view) == 3
+assert sorted(reads) == [A + "1", A + "2", A + "3"]  # not another repo, an ended Session, or a review Link
+ev = {r["id"]: (r["kind"], r["ref"], json.loads(r["payload"])) for r in c.execute("SELECT * FROM events")}
+assert sorted(ev) == ["gh:check:abc123:ci/deploy", "gh:check:abc123:test", f"gh:conflict:{A}1:abc123"], sorted(ev)
+assert ev["gh:check:abc123:test"] == ("pr", A + "1", {
+    "what": "check failed: test", "actor": "ci", "at": "2026-10-28T16:00:00Z",
+    "url": "https://github.com/acme/app/actions/runs/7/job/test", "self": False, "admitted": False})
+assert ev["gh:check:abc123:ci/deploy"][2]["url"] == "https://ci.example.com/9"
+conflict = ev[f"gh:conflict:{A}1:abc123"][2]
+assert (conflict["what"], conflict["actor"], conflict["url"]) == ("merge conflict with dev", "github", A + "1")
+# The timer: a second call within 3 minutes reads nothing. The next run with the same head inserts nothing new.
+reads.clear()
+assert g.poll(c, pol, list_fn=lambda p: 1 / 0, view=view) == 0 and reads == []
+c.execute("DELETE FROM cursors WHERE source = 'github:checks:next'")
+assert g.poll(c, pol, list_fn=lambda p: 1 / 0, view=view) == 0 and len(reads) == 3
+# The dry run prints the Events and writes nothing, not even the timer.
+c.execute("DELETE FROM cursors WHERE source = 'github:checks:next'")
+with contextlib.redirect_stdout(io.StringIO()) as out:
+    assert g.poll(c, pol, dry_run=True, list_fn=lambda p: ({}, []), view=view) == 3
+assert len(out.getvalue().splitlines()) == 3 and c.execute("SELECT count(*) FROM events").fetchone()[0] == 3
+assert g.cursor(c, "github:checks:next") is None
+# A failed check read does not stop the notifications.
+c.execute("DELETE FROM cursors WHERE source = 'github:next'")
+listed = []
+with contextlib.redirect_stderr(io.StringIO()) as err:
+    g.poll(c, pol, list_fn=lambda p: listed.append(p) or ({}, []), view=lambda u: 1 / 0)
+assert listed and "github checks failed" in err.getvalue()
 print("ok")

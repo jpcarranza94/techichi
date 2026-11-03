@@ -71,7 +71,7 @@ SQLite cannot change a CHECK constraint. `registry.connect()` rebuilds the `sess
 
 | Source | id |
 |---|---|
-| GitHub | `gh:<thread_id>:<updated_at>` |
+| GitHub | `gh:<activity>:<id>`, `gh:check:<head sha>:<check name>`, or `gh:conflict:<PR URL>:<head sha>` |
 | Jira | `jira:comment:<id>` or `jira:changelog:<id>` |
 | Slack | `slack:<channel>:<ts>` |
 | herdr | `herdr:<pane>:<seq>` |
@@ -267,7 +267,16 @@ Admission is a property of an Event: `kind = ticket` and `admitted = true`. The 
   - commits by committer date: `gh:commit:<sha>`, what `push`.
   - review requests, only when the notification `reason` is `review_requested`: the issue events by `created_at` with `event = review_requested` and `requested_reviewer` equal to the `gh` login. Each one is `gh:review_request:<id>`, kind `review`, what `review requested`, actor `review_requester`, `admitted` true, and `project` the policy project of the repo. A team request names no `requested_reviewer`, so it makes no Event.
 - Each Event has the activity's own actor and `html_url`. `self` is true when the actor is the `gh` login, so the session's own pushes and replies are dropped.
-- A notification update with no new activity makes no Event. That covers comment edits and CI runs. CI failures do not reach a session yet.
+- A notification update with no new activity makes no Event. That covers comment edits and CI runs.
+
+The Source also reads failed checks and merge conflicts. `poll()` runs `checks()` on its own timer cursor `github:checks:next`, every 3 minutes. It runs when the notifications are not due. It does not run on the first run. A failure in it writes one log line and does not stop the notifications.
+
+- It reads each distinct `pr` Link of a Session that is not `ended`, in a repo that `policy.toml` lists as `github`. It does not read a `review` Link, because a reviewer does not fix the PR of another person.
+- One read for each PR: `gh pr view <URL> --json state,headRefOid,baseRefName,mergeable,statusCheckRollup`. It skips a PR whose `state` is not `OPEN`.
+- A check failed on the head commit: a `CheckRun` with conclusion `FAILURE`, `TIMED_OUT`, or `STARTUP_FAILURE`, or a `StatusContext` with state `FAILURE` or `ERROR`. A `CANCELLED` run makes no Event, because a newer push cancels the runs of the old head. Each one is `gh:check:<head sha>:<name or context>`, kind `pr`, what `check failed: <name>`, actor `ci`, at `completedAt` or now, url the check link or the PR.
+- `mergeable` is `CONFLICTING`: `gh:conflict:<PR URL>:<head sha>`, what `merge conflict with <base>`, actor `github`, url the PR. `UNKNOWN` means that GitHub still computes it, so it makes no Event. The next run sees it.
+- `self` is false. The ids deduplicate the runs on the same head. A new push gives new ids.
+- These Events carry no `head`, because the `pr` Link already routes them.
 
 `python3 github_source.py --dry-run [--since <ISO time>]` prints the Events and writes nothing, not even the cursor.
 

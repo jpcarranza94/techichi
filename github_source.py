@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""GitHub Source: activities on policy repos' pull requests become Events, one per activity. Read only. See DESIGN.md."""
+"""GitHub Source: activities on policy repos' pull requests become Events, one per activity, and so do failed checks
+and merge conflicts on the open PRs of the Sessions. Read only. See DESIGN.md."""
 import argparse
 import json
 import re
 import subprocess
+import sys
 from datetime import timedelta
 
 import config
@@ -15,6 +17,9 @@ OVERLAP = timedelta(minutes=10)  # GitHub can list a notification after a newer 
 PER_PAGE = 50  # the GitHub maximum for notifications
 MAX_PAGES = 10  # ponytail: 500 updates in one poll interval is the ceiling. Past it the oldest are lost.
 PER_ACTIVITY_PAGE = 100
+CHECKS_EVERY = timedelta(minutes=3)  # ponytail: one gh read per open PR each run. Raise it if the rate limit bites.
+# CheckRun conclusions and StatusContext states. Not CANCELLED: a newer push cancels the runs of the old head.
+FAILED = {"FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ERROR"}
 
 
 def gh(path, headers=False):
@@ -55,7 +60,6 @@ def activities(note, since, fetch=gh_all, login=me, project=None):
     """One Event per activity on the PR of a notification, from `since` up to the notification's updated_at.
     An edit or a CI run changes updated_at but adds no activity, so it makes no Event.
     A review request for the operator is an admitted review Event of `project`: it starts a reviewer."""
-    # ponytail: CI failures do not reach a session yet. Add them when a session needs them after its own run ends.
     m = re.fullmatch(r"https://api\.github\.com/repos/([\w.-]+/[\w.-]+)/pulls/(\d+)", note["subject"].get("url") or "")
     if not m:
         return []
@@ -101,15 +105,74 @@ def head_branch(note, get=None):
     return (get or gh)(note["subject"]["url"].replace("https://api.github.com/", ""))["head"]["ref"]
 
 
-def poll(con, pol, dry_run=False, since=None, fetch=gh_all, login=me, list_fn=None, get=None):
-    """Insert Events for new PR notifications. Return the count. dry_run prints and writes nothing."""
-    if not dry_run and not registry.due(con, "github:next"):
-        return 0
+def pr_view(url):
+    """One read of a PR: its state, head commit, base branch, mergeability, and checks."""
+    out = subprocess.run([config.GH, "pr", "view", url, "--json",
+                          "state,headRefOid,baseRefName,mergeable,statusCheckRollup"],
+                         capture_output=True, text=True, timeout=30, check=True).stdout
+    return json.loads(out)
+
+
+def insert(con, evs, dry_run):
+    """Insert the Events and return the count of new ones. dry_run prints them instead."""
+    if dry_run:
+        for ev in evs:
+            print(json.dumps(ev))
+        return len(evs)
+    return sum(con.execute("INSERT OR IGNORE INTO events (id, source, kind, ref, payload) VALUES (?, ?, ?, ?, ?)",
+                           (ev["id"], ev["source"], ev["kind"], ev["ref"], json.dumps(ev["payload"]))).rowcount
+               for ev in evs)
+
+
+def checks(con, pol, dry_run=False, view=pr_view):
+    """Failed checks and a merge conflict on the head commit of each open PR with a pr Link of a Session that is not
+    ended. A pr Link already routes these Events, so they carry no head branch."""
+    if not dry_run:
+        if not registry.due(con, "github:checks:next"):
+            return 0
+        registry.wait(con, "github:checks:next", CHECKS_EVERY)  # a failed read also waits
+
+    def ev(ref, id_, what, actor, at, url):
+        return {"id": id_, "source": "github", "kind": "pr", "ref": ref, "payload": {
+            "what": what, "actor": actor, "at": at, "url": url or ref, "self": False, "admitted": False}}
+
+    repos = {p["github"].lower() for p in pol["projects"].values() if "github" in p}
+    evs = []
+    for (ref,) in con.execute("SELECT DISTINCT l.ref FROM links l JOIN sessions s USING (session_id) "
+                              "WHERE l.kind = 'pr' AND s.state != 'ended'").fetchall():
+        m = re.fullmatch(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/\d+", ref)
+        if not m or m[1].lower() not in repos:
+            continue
+        pr = view(ref)
+        if pr["state"] != "OPEN":
+            continue
+        sha = pr["headRefOid"]
+        for c in pr.get("statusCheckRollup") or []:
+            if c.get("conclusion") in FAILED or c.get("state") in FAILED:
+                name = c.get("name") or c.get("context")
+                evs.append(ev(ref, f"gh:check:{sha}:{name}", f"check failed: {name}", "ci",
+                              c.get("completedAt") or now(), c.get("detailsUrl") or c.get("targetUrl")))
+        if pr["mergeable"] == "CONFLICTING":  # UNKNOWN: GitHub still computes it. The next run sees it.
+            evs.append(ev(ref, f"gh:conflict:{ref}:{sha}", f"merge conflict with {pr['baseRefName']}", "github",
+                          now(), ref))
+    return insert(con, evs, dry_run)
+
+
+def poll(con, pol, dry_run=False, since=None, fetch=gh_all, login=me, list_fn=None, get=None, view=pr_view):
+    """Insert Events for new PR notifications, and for failed checks and conflicts. Return the count.
+    dry_run prints and writes nothing."""
     last = cursor(con, "github")
     if not since and not last:
         if not dry_run:
             set_cursor(con, "github", now())  # first run: start from now, never flood live sessions
         return 0
+    try:  # on its own timer, so it runs when the notifications are not due
+        n = checks(con, pol, dry_run, view)
+    except Exception as e:  # a failed check read must not stop the notifications
+        n = 0
+        print("github checks failed:", str(e)[:300], file=sys.stderr, flush=True)
+    if not dry_run and not registry.due(con, "github:next"):
+        return n
     since = since or iso(registry.parse(last) - OVERLAP)
     if not dry_run:
         registry.wait(con, "github:next", timedelta(seconds=60))  # a failed request also waits
@@ -122,7 +185,6 @@ def poll(con, pol, dry_run=False, since=None, fetch=gh_all, login=me, list_fn=No
             break
         page += 1
     repos = {p["github"].lower(): k for k, p in pol["projects"].items() if "github" in p}
-    n = 0
     for note in notes:
         if note["subject"]["type"] != "PullRequest" or note["repository"]["full_name"].lower() not in repos:
             continue
@@ -133,13 +195,7 @@ def poll(con, pol, dry_run=False, since=None, fetch=gh_all, login=me, list_fn=No
             head = head_branch(note, get)
             for ev in evs:
                 ev["payload"]["head"] = head
-        for ev in evs:
-            if dry_run:
-                print(json.dumps(ev))
-                n += 1
-            else:
-                n += con.execute("INSERT OR IGNORE INTO events (id, source, kind, ref, payload) VALUES (?, ?, ?, ?, ?)",
-                                 (ev["id"], ev["source"], ev["kind"], ev["ref"], json.dumps(ev["payload"]))).rowcount
+        n += insert(con, evs, dry_run)
     if dry_run:
         return n
     if notes:  # the overlap returns older notes too, so the cursor never moves back
