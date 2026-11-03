@@ -1,4 +1,4 @@
-"""Check for the five Recorders: pipe hook JSON into each script. Run: python3 test_hooks.py"""
+"""Check for the five Recorders and the attention hook: pipe hook JSON into each script. Run: python3 test_hooks.py"""
 import testenv  # noqa: F401  (first: a temp config folder)
 import json
 import os
@@ -63,6 +63,26 @@ sqlite3.connect(DB, isolation_level=None).executescript(
 fire("session_start.py", {"session_id": "r2", "cwd": d, "source": "clear"}, pane="wR:p1")
 assert q("SELECT kind, ref FROM links WHERE session_id = 'r2'") == [("review", "https://github.com/acme/app/pull/7")]
 assert q("SELECT role FROM sessions WHERE session_id = 'r2'") == [("reviewer",)]
+
+# attention.py: a "Needs you:" line in the last reply marks the pane. Any other reply or a new prompt clears it.
+herdr_log = Path(d) / "herdr.log"
+fake = Path(d) / "herdr"
+fake.write_text("#!/bin/sh\n"
+                f"echo \"$*\" >> {herdr_log}\n"
+                'echo \'{"result": {"agent": {"name": "app-1", "agent": "claude"}}}\'\n')
+fake.chmod(0o755)
+os.environ["TECHICHI_HERDR"] = str(fake)
+fire("attention.py", {"session_id": "s3", "hook_event_name": "Stop",
+                      "last_assistant_message": "The plan is ready.\n\n**Needs you:** approve the plan."})
+fire("attention.py", {"session_id": "s3", "hook_event_name": "UserPromptSubmit", "prompt": "Needs you: no"})
+fire("attention.py", {"session_id": "s3", "hook_event_name": "Stop", "last_assistant_message": "It needs your review."})
+src = "--session default pane report-metadata wX:p1 --source techichi.attention"
+assert herdr_log.read_text().splitlines() == [
+    "--session default agent get wX:p1",
+    f"{src} --display-agent \u2691 app-1 --state-label idle=needs you: approve the plan. "
+    "--state-label done=needs you: approve the plan.",
+    f"{src} --clear-display-agent --clear-state-labels",
+    f"{src} --clear-display-agent --clear-state-labels"], herdr_log.read_text()
 
 # Bad input never fails the hook.
 fire("pr_link.py", "not json")

@@ -37,6 +37,17 @@ if sys.platform.startswith("linux") and shutil.which("systemd-analyze"):
     r = subprocess.run(["systemd-analyze", "--user", "verify", str(unit)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
 
+# --- An entry that names a hook through a link to the hooks folder counts as present. ---
+link = Path(tempfile.mkdtemp()) / "hooks"
+link.symlink_to(install.HOOKS)
+s = link.parent / "settings.json"
+s.write_text(json.dumps({"hooks": {"SessionEnd": [{"matcher": "*", "hooks": [
+    {"type": "command", "command": f"{sys.executable} {link}/session_end.py"}]}]}}))
+with contextlib.redirect_stdout(io.StringIO()):
+    install.hooks(s)
+h = json.loads(s.read_text())["hooks"]
+assert [len(h[e]) for e in ("SessionEnd", "SessionStart", "Stop", "UserPromptSubmit")] == [1, 1, 1, 1], h
+
 # --- A fresh install: a temp HOME, a policy with one command Source, no GitHub, no gh, no Jira, no Slack ---
 home = Path(tempfile.mkdtemp(dir="/tmp" if os.path.isdir("/tmp") else None)).resolve()  # a short socket path
 cfg = home / ".config/techichi"

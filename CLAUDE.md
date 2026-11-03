@@ -18,7 +18,7 @@ Each module owns one concept. Put new code in the module that owns its concept.
 | `spawn.py` | The spawner for workers, reviewers, and helper Sessions |
 | `github_source.py`, `jira_source.py`, `slack_source.py` | The Sources. Each one reads a system and inserts Events |
 | `factory.py`, `plan.py` | The operator commands: `claim`, `status`, `cleanup`, and the plan table |
-| `hooks/*.py` | The five Recorders |
+| `hooks/*.py` | The five Recorders and the attention hook |
 | `install.py` | Hooks into `~/.claude/settings.json`, the skill render, the launchd plist or the systemd unit |
 | `skills/techichi-*/SKILL.md` | Skill templates. `install.py skills` fills `{factory}` and `{home}` and appends the operator's extra text |
 

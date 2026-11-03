@@ -2,7 +2,8 @@
 """Install the factory for this user. Safe to run again. Needs python 3.11 or later for tomllib.
 
   install.py          hooks, skills and service
-  install.py hooks    add the five Recorders to ~/.claude/settings.json, when a harness in use records with hooks
+  install.py hooks    add the five Recorders and the attention hook to ~/.claude/settings.json,
+                      when a harness in use records with hooks
   install.py skills   render the skills into <config>/skills. Link all but the relay for a harness that links skills.
   install.py service  write the launchd plist (macOS) or the systemd user unit (Linux), print how to start it
   install.py plist    the same as service, kept for old notes
@@ -25,7 +26,8 @@ PY = sys.executable  # absolute, so the hooks and launchd do not depend on PATH
 RECORDERS = [("SessionStart", "*", "session_start.py"), ("SessionEnd", "*", "session_end.py"),
              ("PostToolUse", "Bash", "pr_link.py"),
              ("PostToolUse", "mcp__claude_ai_Slack__slack_send_message", "slack_link.py"),
-             ("PostToolUse", "Skill", "ticket_link.py")]
+             ("PostToolUse", "Skill", "ticket_link.py"),
+             ("Stop", "*", "attention.py"), ("UserPromptSubmit", "*", "attention.py")]
 ROLES = ("worker", "planner", "relay", "reviewer")
 
 
@@ -38,8 +40,10 @@ def hooks(settings=CLAUDE / "settings.json", pol=None):
         shutil.copy2(settings, settings.with_suffix(".json.bak-factory"))
     for event, matcher, script in RECORDERS:
         entries = d.setdefault("hooks", {}).setdefault(event, [])
-        cmd = f"{PY} {HOOKS / script}"
-        if any(str(HOOKS / script) in h.get("command", "") for e in entries for h in e.get("hooks", [])):
+        cmd, target = f"{PY} {HOOKS / script}", (HOOKS / script).resolve()
+        # An entry can name the script through a link to the hooks folder.
+        if any(Path(w).resolve() == target
+               for e in entries for h in e.get("hooks", []) for w in h.get("command", "").split()):
             print(f"present: {event} {script}")
             continue
         entries.append({"matcher": matcher, "hooks": [{"type": "command", "command": cmd, "timeout": 5}]})

@@ -87,6 +87,19 @@ def report_ticket(pane, key):
                                   "tokens": {"ticket": key}})
 
 
+def report_attention(pane, need):
+    """Mark a pane whose agent waits for the operator: a flag on its name, and its idle and done labels.
+    need None clears the mark. Display only: herdr keeps the semantic state."""
+    src = config.policy()["factory"]["metadata_source"] + ".attention"
+    if need is None:
+        run("pane", "report-metadata", pane, "--source", src, "--clear-display-agent", "--clear-state-labels")
+        return
+    a = agent(pane)
+    label = f"needs you: {need}" if need else "needs you"
+    run("pane", "report-metadata", pane, "--source", src, "--display-agent", f"\u2691 {a.get('name') or a['agent']}",
+        "--state-label", f"idle={label}", "--state-label", f"done={label}")
+
+
 def agents():
     return run("agent", "list")["agents"]
 

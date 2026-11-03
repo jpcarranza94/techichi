@@ -31,7 +31,7 @@ Invariants:
 1. Every update enters the system as an Event. No component acts on a source system directly.
 2. A Session binds to a Ref only through a Link. No component parses a branch name, a session name, or a PR title to route.
 3. Identity comes before execution. The spawner picks the UUID before it starts the agent.
-4. Only Actions talk to herdr, and only through `herdr.py`. Sources, Recorders, and the Router never call herdr.
+4. Only Actions talk to herdr, and only through `herdr.py`. Sources, Recorders, and the Router never call herdr. The one exception is the attention hook: it sets display metadata only.
 5. The Router is pure. It reads the registry and returns a decision. It writes nothing.
 6. No Event is dropped in silence. Every Event ends as `delivered`, `held`, `unrouted`, or `dropped` with a reason.
 
@@ -136,7 +136,7 @@ Handle it per the techichi-worker skill.
 
 The behavior for each kind lives in one user skill, the worker skill (`[skills] worker`). A prompt to the planner names the planner skill (`[skills] planner`) instead. A prompt to a reviewer names the reviewer skill (`[skills] reviewer`), and its first line names the PR: `[factory] 1 item for PR 5.` The registry carries no behavior.
 
-When a worker, a reviewer, or the planner needs the operator, the skill tells it to ask with the question tool of its harness, not with a plain text reply. While the question is open, herdr marks the pane `blocked`: its clients show it, and a phone client can push it. Rule 5 holds the Events of a `blocked` Session, so no prompt types into the question.
+When a worker, a reviewer, or the planner needs the operator, the skill tells it to write the need in plain text and to end the reply with a line that starts with `Needs you:`. The attention hook (see Recorders) then flags the pane in herdr. The flag is display only. The pane stays `idle` or `done`, so Rule 5 still delivers Events to it. A question tool or a permission prompt still makes the pane `blocked`, and Rule 5 holds its Events.
 
 ## Spawn
 
@@ -187,6 +187,8 @@ Five Python scripts in `hooks/`. They are Claude Code hooks, so only the `claude
 The `slack` Link holds the thread root: `thread_ts` for a reply, else the `ts` of the new message.
 
 The daemon reads `branch` with `git -C <cwd> branch --show-current` on each status change. No Recorder parses git commands.
+
+`hooks/attention.py` is not a Recorder. It writes no Link. `install.py hooks` adds it for `Stop` and `UserPromptSubmit`, with the same session checks as a Recorder. On `Stop`, if a line of `last_assistant_message` starts with `Needs you:`, it reports pane metadata with the source `<[factory] metadata_source>.attention`: the display name `⚑ <agent name>`, and the `idle` and `done` labels `needs you: <the rest of the line>`. Any other `Stop`, and every `UserPromptSubmit`, clears that metadata. herdr clients and Ovis show the display name. Waits, notifications, and the herdr status do not change. Only Claude Code gives a hook the last reply, so a Pi Session gets no flag.
 
 ## Daemon
 
@@ -409,7 +411,7 @@ Timers live in the `cursors` table. `registry.due(name)` and `registry.wait(name
   daemon.py        the daemon: one pass, the planner and the relay, the herdr sync, the event loop
   install.py       hooks, skills and the plist
   spawn.py         the spawner
-  hooks/*.py       the five Recorders
+  hooks/*.py       the five Recorders and the attention hook
   github_source.py the GitHub Source
   jira_source.py   the Jira Source
   slack_source.py  the Slack Source, run by the relay session

@@ -17,7 +17,7 @@ The factory routes ticket, pull request, and Slack updates to the session that o
 - Code changes on the branch of this session are allowed. Commit them.
 - Push a commit that fixes a review item, a failed check, or a merge conflict to the branch of this session. Reviewers see only pushed commits. Do not push anything else outside the start skill.
 - Before you post a ticket comment or a Slack message, show the draft to the operator and wait for approval.
-- Each time you wait for the operator, ask with your question tool. See "Wait for the operator".
+- Each time you wait for the operator, end your reply with a `Needs you:` line. See "Wait for the operator".
 - Do not edit `registry.db` by hand. The Recorder hooks or the daemon write the Links. The one exception is the escalation below.
 - Never run `factory.py cleanup`. The daemon ends a spawned worker when its work is done, and the operator runs `cleanup` by hand.
 
@@ -29,7 +29,7 @@ The spawner starts the session in a new worktree on the branch for the ticket. T
    If the start skill does not exist, stop and tell the operator. Do not run another skill instead.
 2. If the first prompt says "with the plan checkpoint on", stop after the plan. The operator approves the plan.
 3. If the first prompt names a handoff mode, use it. Do not ask for it.
-4. Ask the operator to approve the plan, as "Wait for the operator" says. Put the plan path and a three-line summary in the question.
+4. Write the plan path and a three-line summary. Then ask the operator to approve the plan, as "Wait for the operator" says.
 
 ## Kind: pr (for example `github pr 574`)
 
@@ -80,16 +80,18 @@ Stop and ask the operator when one of these occurs:
 
 ## Wait for the operator
 
-The operator can be away from the screen. A plain text request at the end of a turn looks like finished work, so nobody sees it.
+The operator can be away from the screen. A flag in herdr shows the operator which session waits for them.
 
-Each time you need the operator, ask with the question tool of your harness: `AskUserQuestion` in Claude Code. This applies to every kind of need: approve a plan or a draft, make a decision, give information, or do an action that only the operator can do, such as a login, a merge, or a deploy.
+Each time you need the operator, write the need in your reply, in plain text: what you need, why, and the links. End the reply with one line that starts with `Needs you:` and names the need in a few words. Then stop.
 
-- Put the need and its context in the question: what you need, why, and the links.
-- Give two to four short options for the likely answers, for example "Continue", "Change it", or "Done". The operator can also type free text.
-- While the question is open, herdr marks the pane `blocked`. herdr clients show it, and a phone client can notify the operator and answer it.
-- The factory holds its items for a `blocked` session, so no item types into the open question.
+```
+Needs you: approve the plan
+```
 
-If your harness has no question tool, write the need as your last message and stop.
+- This applies to every kind of need: approve a plan or a draft, make a decision, give information, or do an action that only the operator can do, such as a login, a merge, or a deploy.
+- The factory puts a flag on the pane in herdr. The next prompt clears it.
+- If a factory item comes while you wait, handle it. If you still wait for the operator after it, end that reply with the `Needs you:` line again.
+- If you need nothing from the operator, do not write the line.
 
 ## Escalate to coordinator
 

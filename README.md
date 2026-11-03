@@ -15,7 +15,7 @@ The factory is a small Python daemon for macOS and Linux. It uses only the Pytho
 3. The session runs your start skill for the ticket. It stops after the plan, if you ask for a checkpoint.
 4. Comments, reviews, and pushes on the ticket and its pull requests become Events.
 5. The daemon sends each Event to its session as one short prompt with a link. The session reads the item at its link.
-6. When a session needs you, it asks with the question tool of its harness. herdr marks the pane `blocked`, so a herdr client or a phone client such as Ovis can notify you. The daemon holds new items for that session until you answer.
+6. When a session needs you, it says so in plain text and ends the reply with a `Needs you:` line. A hook puts a flag on its pane, so a herdr client or a phone client such as Ovis shows which session waits for you. Claude Code only.
 7. When someone asks you to review a pull request in a project repo on GitHub, the spawner starts a reviewer session on the PR head. It writes an overview and a review, and it asks you what to post.
 
 ## Prerequisites
@@ -68,7 +68,7 @@ Do these steps in order. Run the commands in a shell inside herdr.
    python3 ~/techichi/install.py
    ```
 
-   It renders the skills into `~/.config/techichi/skills/`. For Claude Code, it also adds five hooks to `~/.claude/settings.json`, keeps a backup next to it, and links the worker, the planner, and the reviewer skill into `~/.claude/skills/`. Pi gets the skill folder on its start line, so nothing goes into `~/.pi`. On macOS it writes `~/.config/techichi/techichi.plist`. On Linux it writes `~/.config/systemd/user/techichi.service`. A bad policy stops the install with one line that names the missing key.
+   It renders the skills into `~/.config/techichi/skills/`. For Claude Code, it also adds the five Recorder hooks and the attention hook to `~/.claude/settings.json`, keeps a backup next to it, and links the worker, the planner, and the reviewer skill into `~/.claude/skills/`. Pi gets the skill folder on its start line, so nothing goes into `~/.pi`. On macOS it writes `~/.config/techichi/techichi.plist`. On Linux it writes `~/.config/systemd/user/techichi.service`. A bad policy stops the install with one line that names the missing key.
 
 6. Do one pass by hand. Read the output for errors:
 
