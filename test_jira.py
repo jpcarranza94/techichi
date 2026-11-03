@@ -32,7 +32,10 @@ UPDATES = [{"key": "APP-11", "fields": {"comment": {"comments": [
     "changelog": {"histories": [
         {"id": "900", "created": "2026-10-28T10:01:00.000-0400", "author": {"displayName": "Bob", "accountId": "a-sh"},
          "items": [{"field": "status"}, {"field": "assignee"}, {"field": "status"}]},
-        {"id": "899", "created": "2026-10-26T10:01:00.000-0400", "author": {"displayName": "Bob"}, "items": []}]}},
+        {"id": "899", "created": "2026-10-26T10:01:00.000-0400", "author": {"displayName": "Bob"}, "items": []},
+        {"id": "901", "created": "2026-10-28T10:02:00.000-0400", "author": {"displayName": "Bob"}, "items": [{"field": "Rank"}]},
+        {"id": "902", "created": "2026-10-28T10:03:00.000-0400", "author": {"displayName": "Bob"},
+         "items": [{"field": "Rank"}, {"field": "Sprint"}]}]}},
     # Updated, but no Session links it.
     {"key": "APP-99", "fields": {"comment": {"comments": [
         {"id": "700", "created": "2026-10-28T10:00:00.000-0400", "author": {"displayName": "X"}}]}}},
@@ -92,7 +95,7 @@ assert j.poll(con, pol) == 0 and len(seen) == n
 # Updates: cursor 13:55Z, so items from 13:45Z (09:45 EDT) onward are new.
 con.execute("UPDATE cursors SET value = '2026-10-28T13:55:00Z' WHERE source = 'jira'")
 con.execute("DELETE FROM cursors WHERE source = 'jira:next'")
-assert j.poll(con, pol) == 4
+assert j.poll(con, pol) == 5
 q = [q for _, q in seen if q.get("jql", "").startswith("project in")][-1]
 # Projects from the policy, never the linked keys, so the bogus key UTF-8 cannot fail the search.
 assert q["jql"].startswith("project in (APP, WEB) AND updated >= -") and "UTF-8" not in q["jql"]
@@ -105,6 +108,7 @@ assert ev["jira:comment:501"] == {"what": "comment", "actor": "Alice", "at": "20
 assert ev["jira:comment:502"]["self"] is True
 assert ev["jira:changelog:900"]["what"] == "changed status, assignee" and ev["jira:changelog:900"]["url"] == f"{SITE}/browse/APP-11"
 assert "jira:comment:500" not in ev and "jira:changelog:899" not in ev  # older than cursor minus the overlap
+assert "jira:changelog:901" not in ev and ev["jira:changelog:902"]["what"] == "changed Sprint"  # Rank is noise
 assert "jira:comment:700" not in ev  # APP-99 has no Link
 assert "jira:comment:802" in ev and "jira:comment:800" not in ev  # the newest page replaces the cut list
 
@@ -113,7 +117,7 @@ before = list(con.execute("SELECT * FROM cursors")), con.execute("SELECT count(*
 con.execute("UPDATE cursors SET value = '2026-10-28T13:55:00Z' WHERE source = 'jira'")
 before = list(map(tuple, con.execute("SELECT * FROM cursors"))), before[1]
 with contextlib.redirect_stdout(io.StringIO()):
-    assert j.poll(con, pol, dry_run=True) == 5
+    assert j.poll(con, pol, dry_run=True) == 6
 assert (list(map(tuple, con.execute("SELECT * FROM cursors"))), con.execute("SELECT count(*) FROM events").fetchone()[0]) == before
 
 # No error text contains the token, also when the server echoes it.

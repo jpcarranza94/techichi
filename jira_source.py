@@ -79,6 +79,10 @@ def admissions(con, pol):
     return out
 
 
+# Fields whose change tells a session nothing. Each move on the board or the backlog changes Rank.
+NOISE = {"Rank"}
+
+
 def updates(con, pol, last, start):
     keys = {r[0] for r in con.execute("SELECT l.ref FROM links l JOIN sessions s USING (session_id) "
                                              "WHERE l.kind = 'ticket' AND s.state != 'ended'")}
@@ -110,9 +114,10 @@ def updates(con, pol, last, start):
         # ponytail: the embedded changelog holds the newest 40 histories (one ticket had 40 of 45).
         # A cut drops only old ones. More than 40 changes on one ticket in one poll would lose some.
         for h in ((i.get("changelog") or {}).get("histories") or []):
-            if when(h["created"]) >= since:
+            items = [x for x in h.get("items", []) if x.get("field") not in NOISE]
+            if when(h["created"]) >= since and items:
                 a = h.get("author") or {}
-                fields = ", ".join(dict.fromkeys(x.get("field", "?") for x in h.get("items", [])))
+                fields = ", ".join(dict.fromkeys(x.get("field", "?") for x in items))
                 out.append({"id": f"jira:changelog:{h['id']}", "kind": "ticket", "ref": key, "payload": {
                     "what": f"changed {fields}", "actor": a.get("displayName", "unknown"), "at": h["created"],
                     "url": browse, "self": a.get("accountId") == mine, "admitted": False}})
