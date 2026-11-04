@@ -185,7 +185,7 @@ def workspace_close(workspace):
     run("workspace", "close", workspace)
 
 
-HELPERS = "factory"  # one workspace holds the planner and the relay, one tab each
+HELPERS = "factory"  # the workspace of the planner tab
 
 
 def helper_tab(role, cwd):

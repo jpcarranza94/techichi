@@ -102,15 +102,17 @@ con.execute("INSERT INTO needs (session_id, text, at) VALUES ('flag-old', 'stale
 
 # --- status on the scratch database ---
 con.execute("INSERT INTO sessions (session_id, role, state, pane_id) VALUES ('pl', 'planner', 'live', 'wT:p1')")
-con.execute("INSERT INTO cursors (source, value, updated_at) VALUES ('github', '2026-10-28T16:40:45Z', '2026-10-28T16:41:00Z')")
+con.execute("INSERT INTO cursors (source, value, updated_at) VALUES ('github', '2026-10-28T16:40:45Z', '2026-10-28T16:41:00Z'), "
+            "('slack:last', 'slack poll: Slack connected, 1 searches', '2026-10-28T16:42:00Z')")
 con.execute("INSERT INTO events (id, source, kind, ref, payload, status) VALUES ('u1', 'slack', 'inbox', 'operator', '{}', 'unrouted')")
 text = f.status(con, {**pol, "spawn": {"max_active": 10}}, names={SID: "web-690-hand"})
 for want in ("Sessions: 3 not ended", "web-690-hand", "ticket WEB-690", "PR 577", "Slots: 0 of 10 in use",
              "Waiting admitted tickets: 1", "WEB-690    needs-decision", "Unrouted Events: inbox 1",
-             "github           2026-10-28T16:40:45Z", "Planner: pl live", "Relay: none",
+             "github           2026-10-28T16:40:45Z", "Planner: pl live",
+             "slack:last       slack poll: Slack connected, 1 searches written 2026-10-28T16:42:00Z",
              "Needs you: 1\n  web-690-hand approve the plan since 20"):
     assert want in text, (want, text)
-assert "stale" not in text  # an ended Session
+assert "stale" not in text and "Relay" not in text  # an ended Session, no relay
 
 # --- jira_done: the status name decides, not the category. "Ready for Deploy" is in category done. ---
 import jira_source

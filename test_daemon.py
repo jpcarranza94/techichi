@@ -18,7 +18,7 @@ def never(*a):
 
 
 # No test may reach herdr, git or gh through a default Action.
-daemon.prompt_action = daemon.spawn_action = daemon.review_action = daemon.planner_action = daemon.relay_action = never
+daemon.prompt_action = daemon.spawn_action = daemon.review_action = daemon.planner_action = never
 con = registry.connect(Path(tempfile.mkdtemp(), "r.db"))
 
 
@@ -295,54 +295,72 @@ run(spawner(got), prompt=lambda pane, text: notes.append((pane, text)))
 assert status("e-inbox") == ("delivered", "pi", None)
 assert notes[-1][0] == "p-pi" and notes[-1][1].endswith("Handle it per the techichi-planner skill.")
 
-# Relay clock: one relay, a poll every poll_minutes, only when idle or done.
-C = daemon.github_source
-rpol = {**pol, "slack": {"poll_minutes": 5, "max_poll_minutes": 30}}
-starts, polls = [], []
-R = dict(prompt=lambda pane, text: polls.append((pane, text)), start=lambda text: starts.append(text))
-daemon.relay(con, rpol, **R)
-assert starts == ["[factory] slack poll"] and C.cursor(con, "slack:poll_next") > C.now()
-session("r1", role="relay", state="registered")
-daemon.relay(con, rpol, **R)
-assert len(starts) == 1  # a registered relay is still starting
-con.execute("UPDATE sessions SET state = 'live', agent_status = 'idle' WHERE session_id = 'r1'")
-daemon.relay(con, rpol, **R)
-assert polls == []  # inside the interval
-con.execute("DELETE FROM cursors WHERE source = 'slack:poll_next'")
-daemon.relay(con, rpol, **R)
-assert polls == [("p-r1", "[factory] slack poll")] and len(starts) == 1
-for st in ("working", "blocked"):
-    con.execute("UPDATE sessions SET agent_status = ? WHERE session_id = 'r1'", (st,))
-    con.execute("DELETE FROM cursors WHERE source = 'slack:poll_next'")
-    daemon.relay(con, rpol, **R)
-    assert len(polls) == 1  # skipped
-con.execute("UPDATE sessions SET agent_status = 'done' WHERE session_id = 'r1'")
-con.execute("DELETE FROM cursors WHERE source = 'slack:poll_next'")
-daemon.relay(con, rpol, **R)
-assert len(polls) == 2
-# Quiet Slack: 5, 10, 20, then 30 minutes (the cap). A newer message moves the cursor and resets it to 5.
-from datetime import datetime
-def tick():
-    con.execute("DELETE FROM cursors WHERE source = 'slack:poll_next'")
-    daemon.relay(con, rpol, **R)
-    return round((datetime.fromisoformat(C.cursor(con, "slack:poll_next").replace("Z", "+00:00"))
-                  - datetime.fromisoformat(C.now().replace("Z", "+00:00"))).total_seconds() / 60)
-C.set_cursor(con, "slack", "100.0")
-assert [tick() for _ in range(5)] == [5, 10, 20, 30, 30]
-C.set_cursor(con, "slack", "200.0")
-assert tick() == 5
-# A stuck relay ends after 10 minutes, and a new one starts. A failed start waits 5 minutes.
-con.execute("UPDATE sessions SET state = 'registered', created_at = strftime('%Y-%m-%dT%H:%M:%SZ','now','-11 minutes') "
-            "WHERE session_id = 'r1'")
-daemon.relay(con, rpol, prompt=never, start=lambda text: 1 / 0)
-assert con.execute("SELECT state FROM sessions WHERE session_id = 'r1'").fetchone()[0] == "ended"
-assert C.cursor(con, "relay:next") > C.now()
-daemon.relay(con, rpol, **R)
-assert len(starts) == 1  # inside the 5 minutes
-con.execute("DELETE FROM cursors WHERE source = 'relay:next'")
-daemon.relay(con, rpol, **R)
-assert len(starts) == 2
-daemon.relay(con, {k: v for k, v in rpol.items() if k != "slack"}, prompt=never, start=never)  # no [slack]: no relay
+# The Slack poll: one claude -p in the background. It never blocks a pass. No test starts a real claude.
+import os  # noqa: E402
+import subprocess  # noqa: E402
+from datetime import timedelta  # noqa: E402
+import harness  # noqa: E402
+import herdr  # noqa: E402
+import slack_source as S  # noqa: E402
+STREAM = "\n".join(json.dumps(r) for r in [
+    {"type": "system", "subtype": "init", "tools": [harness.SLACK_SEARCH, "mcp__x__a"],
+     "mcp_servers": [{"name": harness.SLACK_SERVER, "status": "connected"}]},
+    {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": harness.SLACK_SEARCH}]}},
+    {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1",
+                                              "content": json.dumps({"results": ""})}]}},
+    {"type": "result", "num_turns": 2, "total_cost_usd": 0.01}]) + "\n"
+procs = []
+
+
+class Proc:  # a fake claude -p: it writes the stream at once and runs until the test ends it
+    def __init__(self, args, stdout, **kw):
+        os.write(stdout, STREAM.encode())
+        self.args, self.kw, self.code = args, kw, None
+        procs.append(self)
+
+    def poll(self):
+        return self.code
+
+    def kill(self):
+        self.code = -9
+
+    def wait(self):
+        return self.code
+
+
+S.set_cursor(con, "slack", "1793196000.000000")
+assert S.poll(con, {**pol, "slack": {**pol["slack"], "work_days": []}}, Proc) is None and procs == []  # outside hours
+assert S.poll(con, {**pol, "slack": {**pol["slack"], "work_hours": [0, 0]}}, Proc) is None and procs == []
+assert S.poll(con, pol, Proc) is None and len(procs) == 1  # inside: one start
+p, out = S.running
+assert p.args[:2] == [harness.POLL_BIN, "-p"] and "--disallowedTools" not in p.args  # the first run hides nothing
+assert p.kw["stdin"] == subprocess.DEVNULL and p.kw["cwd"] == pol["factory"]["relay_cwd"]
+assert p.kw["env"]["MCP_CONNECTION_NONBLOCKING"] == "false" and S.cursor(con, "slack:poll_next") > registry.now()
+con.execute("DELETE FROM cursors WHERE source = 'slack:poll_next'")  # due again
+assert S.poll(con, pol, Proc) is None and len(procs) == 1  # no second start while it runs
+p.code = 0
+line = S.poll(con, pol, Proc)  # a later pass reads it
+assert line.startswith("slack poll: Slack connected, 1 searches, 2 turns, 0.01 USD. slack ingest: 0 messages"), line
+assert not os.path.exists(out) and S.running is None and len(procs) == 1
+assert S.poll(con, pol, Proc) is None and len(procs) == 2  # due: the next start hides the other tools
+p, out = S.running
+assert p.args[p.args.index("--disallowedTools") + 1] == "mcp__x__a"
+assert S.poll(con, pol, Proc) is None and p.code is None  # running for less than 10 minutes
+S.set_cursor(con, "slack:poll_start", registry.now(-timedelta(minutes=11)))
+assert S.poll(con, pol, Proc) == "slack poll: killed after 10 minutes, nothing ingested"
+assert p.code == -9 and not os.path.exists(out) and S.running is None
+# No [slack]: no poll. With slack in the sources, each pass runs one poll step.
+real = herdr.snapshot, S.poll, daemon.factory.cleanup_closed, daemon.factory.auto_cleanup
+herdr.snapshot = lambda: {"agents": []}
+daemon.factory.cleanup_closed = daemon.factory.auto_cleanup = lambda *a: None
+steps = []
+S.poll = lambda con_, pol_: steps.append(1)
+fresh, base = registry.connect(Path(tempfile.mkdtemp(), "f.db")), {**pol, "factory": {**pol["factory"], "sources": []}}
+daemon.resync(fresh, {k: v for k, v in base.items() if k != "slack"})
+assert steps == []
+daemon.resync(fresh, {**base, "factory": {**base["factory"], "sources": ["slack"]}})
+assert steps == [1]
+herdr.snapshot, S.poll, daemon.factory.cleanup_closed, daemon.factory.auto_cleanup = real
 # Rule 5: a working session gets nothing. Its items wait as held and go out in one batch when it is idle.
 session("wk", status="working")
 registry.link(con, "pr", "https://github.com/o/r/pull/577", "wk", "hook:pr_link")

@@ -7,7 +7,7 @@ harness         = "claude"                      # the coding agent: claude or pi
 # sources       = ["github", "jira", "slack"]   # the default: github if a project has github, plus jira and slack when their tables exist
 worktrees       = "~/code/worktrees"            # one worktree per ticket. The coding agent must trust this folder.
 helper_cwd      = "~/code"                      # the planner's cwd. The coding agent must trust this folder.
-# relay_cwd     = "~/.config/techichi/relay"  # empty on purpose. The default is shown.
+# relay_cwd     = "~/.config/techichi/relay"  # the cwd of the Slack poll, empty on purpose. The default is shown.
 # metadata_source = "techichi"             # the herdr pane token source
 # inbox_ref     = "operator"                    # the Ref of DMs and mentions that go to the planner
 
@@ -15,9 +15,8 @@ helper_cwd      = "~/code"                      # the planner's cwd. The coding 
 # The names that prompts use. `install.py skills` renders the core templates with these names.
 worker   = "techichi-worker"
 planner  = "techichi-planner"
-relay    = "techichi-relay"
 reviewer = "techichi-reviewer"                  # reviews a PR that someone asked you to review
-# extra = "skills-extra"                        # a folder in the config dir with worker.md, planner.md, relay.md, reviewer.md to append
+# extra = "skills-extra"                        # a folder in the config dir with worker.md, planner.md, reviewer.md to append
 
 # One table per project. The key is the ticket key prefix, for example the Jira project key.
 # Required: repo and start. Optional: github, admit, setup, harness.
@@ -68,13 +67,14 @@ site       = "https://acme.atlassian.net"
 email      = "you@acme.example"
 token_file = "~/.config/techichi/jira-token"  # a scoped token: read:jira-work, read:jira-user
 
-# Remove this table to run without Slack. Then no relay starts. The relay needs Claude Code and the claude.ai Slack connector.
+# Remove this table to run without Slack. The Slack poll needs Claude Code and the claude.ai Slack connector.
 [slack]
 me               = "U0OPERATOR1"                  # your Slack user id. Own messages are skipped.
 channels         = ["C0APPCHAN1", "C0WEBCHAN2"]   # channel ids to read in full
-poll_minutes     = 5
-max_poll_minutes = 30   # while Slack is quiet, the interval doubles up to this
-hosts            = ["acme.slack.com"]             # permalink hosts that the searches return
+poll_minutes     = 15                             # one claude -p for each poll
+# work_hours     = [0, 24]                        # local hours to poll: start inclusive, end exclusive. The default is shown.
+# work_days      = [1, 2, 3, 4, 5, 6, 7]          # ISO weekdays to poll, Monday = 1. The default is shown.
+hosts            = ["acme.slack.com"]             # permalink hosts that the search returns
 inbox            = false  # rule f: DMs and mentions to the planner
 
 [cleanup]

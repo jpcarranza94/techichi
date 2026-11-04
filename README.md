@@ -30,7 +30,7 @@ The factory is a small Python daemon for macOS and Linux. It uses only the Pytho
 | git | 2.30 or later, with an `origin` remote that you can fetch | The spawner makes one worktree per ticket. Any git host works: GitHub, GitLab, Gitea, or your own. |
 | GitHub CLI (optional) | `gh auth login` done, with the `repo` and `notifications` scopes | Only for a project with `github`. The GitHub Source reads notifications and the review requests of a PR. The spawner reads the default branch, open PRs, and the head of a PR to review. The cleanup reads the PR state. |
 | Jira Cloud token (optional) | A scoped API token with `read:jira-work` and `read:jira-user` | The Jira Source reads only. Without Jira, remove `[jira]` from the policy. |
-| Slack (optional) | Claude Code (also when your workers use Pi) with the Slack connector of claude.ai: `slack_search_public_and_private`, `slack_read_thread`, `slack_send_message` | A relay session reads Slack. It needs Claude Code. Without it, remove `[slack]` from the policy. |
+| Slack (optional) | Claude Code (also when your workers use Pi) with the Slack connector of claude.ai: `slack_search_public_and_private`, `slack_read_thread`, `slack_send_message` | The daemon runs one `claude -p` for each Slack poll. It needs Claude Code, logged in, on the `PATH` of the daemon. Without it, remove `[slack]` from the policy. |
 | A start skill | See "Start skill" below | The work on each ticket. |
 
 The coding agent must trust the folders `worktrees` and `helper_cwd` of the policy. Else a trust dialog blocks a new session.
@@ -103,7 +103,7 @@ The harness is the coding agent that works on a ticket. `[factory] harness` sets
 
 | Harness | Session id | Instructions | Hooks | Notes |
 |---|---|---|---|---|
-| `claude` | `--session-id`, picked by techichi | skills linked into `~/.claude/skills` | yes: five Recorders | The Slack relay needs it. |
+| `claude` | `--session-id`, picked by techichi | skills linked into `~/.claude/skills` | yes: five Recorders | The Slack poll needs it. |
 | `pi` | `--session-id`, picked by techichi | `--skill <folder>` on the start line | no | Pi works with many model providers. Set the model with `[harness.pi] args`. |
 
 Without hooks, or on a forge other than GitHub, techichi links a pull request to a session by its head branch: the branch that the spawner made for the ticket. Open the PR from that branch.
@@ -116,7 +116,7 @@ To add a harness, add one entry to `HARNESSES` in `harness.py`. `test_harness.py
 
 - `github`: activity on the pull requests of your project repos.
 - `jira`: tickets that your `admit` query admits, and updates on the tickets of your sessions.
-- `slack`: the relay. It needs Claude Code and the claude.ai Slack connector.
+- `slack`: one `claude -p` for each poll, every `poll_minutes` inside `work_hours` and `work_days`. It needs Claude Code and the claude.ai Slack connector.
 - Any other name is a command Source. Add `[sources.<name>] command = [...]`. techichi runs the command every `every_seconds` (default 60). The command prints one JSON Event per line:
 
   ```json
@@ -206,7 +206,7 @@ description: Take one ticket to a pull request in the current folder. Use when a
 
 - The Sources only read. The Jira Source uses GET requests. The GitHub Source never marks a notification as read.
 - The prompt to a session holds only a link, never the text of a comment.
-- The relay session reads Slack text from anyone. It runs with `--restricted` and `--permission-mode dontAsk`, and it may run only two commands.
+- The Slack poll reads Slack text from anyone. Each poll is a new `claude -p` with `--restricted`, no built-in tools, and `--permission-mode dontAsk`. It may call only the Slack search tool.
 - The daemon never removes a worktree that has changes or commits that no remote has.
 
 ## Tests

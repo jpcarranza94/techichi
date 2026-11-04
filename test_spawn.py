@@ -114,27 +114,7 @@ with tempfile.TemporaryDirectory() as d:
     except RuntimeError as e:
         assert "stop after the pre-check" in str(e)
 spawn.run = real_run
-# The relay: least privilege. Exact allow rules, no user settings, the skill as system prompt.
-import contextlib, io, re, install  # noqa: E401,E402
-with contextlib.redirect_stdout(io.StringIO()):
-    install.skills()
-args = spawn.relay_args()
-script = config.HERE / "slack_source.py"
-for flag in ("--restricted", "--model", "--tools", "--permission-mode", "--settings", "--append-system-prompt-file"):
-    assert flag in args
-assert args[args.index("--model") + 1] == "haiku"  # mechanical work, Op chose Haiku on 2026-10-28
-assert args[args.index("--tools") + 1] == "Bash" and args[args.index("--permission-mode") + 1] == "dontAsk"
-allowed = list(args[args.index("--allowedTools") + 1:args.index("--settings")])
-assert allowed == [f"Bash(python3 {script} window)", f"Bash(python3 {script} ingest)",
-                   "mcp__claude_ai_Slack__slack_search_public_and_private", "mcp__claude_ai_Slack__slack_read_thread"]
-skill = open(args[args.index("--append-system-prompt-file") + 1]).read()
-# The rendered skill names exactly the slack_source.py of the allow rules, so the relay may run its commands.
-assert set(re.findall(r"python3 (\S+/slack_source\.py) (\w+)", skill)) == {(str(script), "window"), (str(script), "ingest")}
-assert "{factory}" not in skill and args[args.index("--append-system-prompt-file") + 1] == str(spawn.relay_skill_file())
-assert not any("\n" in a for a in args)  # herdr: "agent arguments cannot be encoded safely for the target shell"
-assert "herdr-agent-state.sh session" in args[args.index("--settings") + 1]
-
-# Helpers share one workspace "factory", one tab each. A failed start closes only its tab.
+# The planner gets a tab in the workspace "factory". A failed start closes only its tab.
 calls, real_run, real_start = [], herdr.run, herdr.start_agent
 def fake_herdr(*a, existing=None):
     calls.append(a)
@@ -147,8 +127,8 @@ def fake_herdr(*a, existing=None):
     return {}
 herdr.run = fake_herdr
 fake_herdr.existing = True
-assert herdr.helper_tab("relay", "/tmp/r") == ("w14:p3", "w14", "w14:t3")
-assert calls[-1] == ("tab", "create", "--workspace", "w14", "--cwd", "/tmp/r", "--label", "relay", "--no-focus")
+assert herdr.helper_tab("planner", "/tmp/r") == ("w14:p3", "w14", "w14:t3")
+assert calls[-1] == ("tab", "create", "--workspace", "w14", "--cwd", "/tmp/r", "--label", "planner", "--no-focus")
 fake_herdr.existing, calls[:] = False, []
 assert herdr.helper_tab("planner", "/tmp/p") == ("w20:p1", "w20", "w20:t1")
 assert calls[1][:5] == ("workspace", "create", "--cwd", "/tmp/p", "--label") and calls[1][5] == "factory"
@@ -158,7 +138,7 @@ def failing_start(*a, **k):
     raise RuntimeError("agent start failed")
 herdr.start_agent = failing_start
 try:
-    spawn.spawn_helper("relay", tempfile.mkdtemp(), lambda sid: ("claude", []), "x", db=Path(tempfile.mkdtemp(), "h.db"))
+    spawn.spawn_helper("planner", tempfile.mkdtemp(), lambda sid: ("claude", []), "x", db=Path(tempfile.mkdtemp(), "h.db"))
     raise AssertionError("spawn_helper must raise")
 except RuntimeError:
     pass

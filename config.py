@@ -29,8 +29,7 @@ def _defaults():
                     "harness": "claude"},
         "harness": {},  # [harness.<name>] args = [...]: extra start args for one harness
         "sources": {},  # [sources.<name>] command = [...]: a command Source
-        "skills": {"worker": "techichi-worker", "planner": "techichi-planner", "relay": "techichi-relay",
-                   "reviewer": "techichi-reviewer"},
+        "skills": {"worker": "techichi-worker", "planner": "techichi-planner", "reviewer": "techichi-reviewer"},
         "route": {"ticket": ["coordinator", "worker"], "pr": ["worker", "coordinator"],
                   "slack": ["worker", "coordinator"], "inbox": ["planner"], "review": ["reviewer"]},
         "hold": {"notify_after_minutes": 60},
@@ -39,7 +38,9 @@ def _defaults():
     }
 
 
-SLACK = {"poll_minutes": 5, "max_poll_minutes": 30, "inbox": False}  # [slack] is optional. Without it no relay starts.
+# [slack] is optional. Without it no poll runs. work_hours: local hours, start inclusive, end exclusive.
+# work_days: ISO weekdays, Monday = 1.
+SLACK = {"poll_minutes": 15, "work_hours": [0, 24], "work_days": [1, 2, 3, 4, 5, 6, 7], "inbox": False}
 REQUIRED = {"jira": ("api", "site", "email", "token_file"), "slack": ("me", "channels", "hosts"),
             "project": ("repo", "start")}
 COMMAND = {"every_seconds": 60, "timeout_seconds": 60}

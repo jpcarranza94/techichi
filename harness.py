@@ -36,6 +36,23 @@ HARNESSES = {
 }
 
 
+# The Slack poll: one `claude -p` per poll. Claude Code only: it needs the claude.ai Slack connector.
+# Checked on 2026-11-04 with Claude Code 2.1.318. See DESIGN.md "Slack Source".
+POLL_BIN = "claude"
+SLACK_SERVER = "claude.ai Slack"  # its name in the mcp_servers of the init event
+SLACK_SEARCH = "mcp__claude_ai_Slack__slack_search_public_and_private"
+# The claude.ai connectors load in the background. Without this, -p starts before they connect.
+POLL_ENV = {"MCP_CONNECTION_NONBLOCKING": "false"}
+
+
+def poll_args(prompt, hide=()):
+    """The args of one poll. dontAsk with one allowed tool is the security boundary. --disallowedTools hides
+    the other connector tools only to cut the prompt: about 82k tokens of tool definitions down to 7k."""
+    return ["-p", prompt, "--model", "haiku", "--restricted", "--tools", "", "--permission-mode", "dontAsk",
+            "--allowedTools", SLACK_SEARCH, *(["--disallowedTools", *hide] if hide else []),
+            "--no-session-persistence", "--output-format", "stream-json", "--verbose"]
+
+
 def of_project(pol, project):
     """The harness name of a project, or the factory default."""
     return (pol["projects"].get(project) or {}).get("harness") or pol["factory"]["harness"]

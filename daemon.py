@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The daemon: one pass applies the Router to every pending Event, keeps the helper Sessions, and syncs herdr.
+"""The daemon: one pass applies the Router to every pending Event, keeps the planner, and syncs herdr.
 See DESIGN.md sections "Daemon", "Router" and "Delivery". The Router itself is router.py."""
 import json
 import socket
@@ -17,6 +17,7 @@ import harness  # noqa: E402
 import herdr  # noqa: E402
 import jira_source  # noqa: E402
 import registry  # noqa: E402
+import slack_source  # noqa: E402
 from router import admit, route, wrapper  # noqa: E402,F401  (route and admit: daemon.route stays for callers)
 
 NOW = registry.NOW
@@ -25,7 +26,7 @@ NOW = registry.NOW
 TYPES = ["pane.updated", "pane.agent_detected", "pane.closed", "pane.exited", "workspace.closed",
          "worktree.created", "worktree.removed"]
 TICK = 30  # seconds between passes when herdr is quiet
-RETRY = timedelta(minutes=5)  # a failed helper start or planner notice waits this long
+RETRY = timedelta(minutes=5)  # a failed planner start or notice waits this long
 
 
 def log(*a):
@@ -51,11 +52,6 @@ def review_action(url):
 def planner_action(text):
     import spawn
     return spawn.spawn_planner(text)
-
-
-def relay_action(text):
-    import spawn
-    return spawn.spawn_relay(text)
 
 
 def existing_work(e):
@@ -149,55 +145,14 @@ def derive_links(con, pol):
             log("derived pr link", ev["ref"], "to", s["session_id"])
 
 
-# --- Helper Sessions: the planner and the relay -----------------------------------------------------------
+# --- The planner -----------------------------------------------------------------------------------------
 
 def end_stuck(con, role):
-    """A helper whose start failed stays registered. After 10 minutes it is not starting, it is dead."""
+    """A planner whose start failed stays registered. After 10 minutes it is not starting, it is dead."""
     for r in con.execute("SELECT session_id FROM sessions WHERE role = ? AND state = 'registered' "
                          "AND created_at < strftime('%Y-%m-%dT%H:%M:%SZ','now','-10 minutes')", (role,)).fetchall():
         con.execute(f"UPDATE sessions SET state = 'ended', ended_at = {NOW} WHERE session_id = ?", (r["session_id"],))
         log(role, r["session_id"], "registered for over 10 min, set to ended")
-
-
-def relay(con, pol, prompt=None, start=None):
-    """Keep one relay session, and prompt it with "[factory] slack poll" while it is idle or done.
-    The interval is poll_minutes, and it doubles up to max_poll_minutes while Slack is quiet."""
-    if "slack" not in pol or "slack" not in pol["factory"]["sources"]:
-        return
-    prompt, start, slack = prompt or prompt_action, start or relay_action, pol["slack"]
-    end_stuck(con, "relay")
-    live = con.execute("SELECT pane_id, agent_status FROM sessions WHERE role = 'relay' AND state = 'live' "
-                       "ORDER BY last_seen DESC").fetchone()
-    every = timedelta(minutes=slack["poll_minutes"])
-    if not live:
-        starting = con.execute("SELECT 1 FROM sessions WHERE role = 'relay' AND state = 'registered'").fetchone()
-        if starting or not registry.due(con, "relay:next"):
-            return  # at most one relay. A failed start waits RETRY.
-        try:
-            start("[factory] slack poll")  # the first prompt is the first poll
-            registry.wait(con, "slack:poll_next", every)
-            log("relay started")
-        except Exception as e:
-            registry.wait(con, "relay:next", RETRY)
-            log("relay start failed, retry in 5 min:", str(e)[:300])
-        return
-    if not registry.due(con, "slack:poll_next"):
-        return
-    # Quiet Slack: the interval doubles after each tick that did not move the Slack cursor, up to max_poll_minutes.
-    c = registry.cursor
-    seen = c(con, "slack") or ""
-    quiet = min(int(c(con, "slack:quiet") or 0) + 1, 10) if seen == c(con, "slack:seen") else 0
-    registry.set_cursor(con, "slack:seen", seen)
-    registry.set_cursor(con, "slack:quiet", str(quiet))
-    registry.wait(con, "slack:poll_next", min(every * 2 ** quiet, timedelta(minutes=slack["max_poll_minutes"])))
-    if live["agent_status"] in ("idle", "done"):
-        try:
-            prompt(live["pane_id"], "[factory] slack poll")
-        except Exception as e:
-            log("relay poll prompt failed:", str(e)[:300])
-    elif live["agent_status"] == "blocked":
-        log("relay blocked, slack poll skipped")
-    # working: the last poll still runs. Skip this tick.
 
 
 def planner(con, pol, prompt, start, new):
@@ -306,9 +261,12 @@ def resync(con, pol, tokens=False):
     if tokens:
         apply_tokens(con)
     for name in pol["factory"]["sources"]:
-        if name == "slack":
-            continue  # the relay clock below runs the Slack Source
         try:
+            if name == "slack":  # one claude -p in the background. It never blocks the pass.
+                line = slack_source.poll(con, pol)
+                if line:
+                    log(line)
+                continue
             source = {"github": github_source, "jira": jira_source}.get(name)
             n = source.poll(con, pol) if source else command_source.poll(con, pol, name)
             if n:
@@ -316,10 +274,6 @@ def resync(con, pol, tokens=False):
         except Exception as e:  # a Source failure must never cause a herdr reconnect
             log(name, "poll failed:", str(e)[:300])
     process(con, pol)
-    try:
-        relay(con, pol)
-    except Exception as e:  # the relay clock must never cause a herdr reconnect
-        log("relay failed:", str(e)[:300])
     try:
         factory.cleanup_closed(con, pol, gone)  # gone or ended in the last pass and still now
         factory.auto_cleanup(con, pol)  # at most every 10 minutes

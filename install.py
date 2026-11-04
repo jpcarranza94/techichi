@@ -4,7 +4,7 @@
   install.py          hooks, skills and service
   install.py hooks    add the five Recorders and the attention hook to ~/.claude/settings.json,
                       when a harness in use records with hooks
-  install.py skills   render the skills into <config>/skills. Link all but the relay for a harness that links skills.
+  install.py skills   render the skills into <config>/skills. Link them for a harness that links skills.
   install.py service  write the launchd plist (macOS) or the systemd user unit (Linux), print how to start it
   install.py plist    the same as service, kept for old notes
 
@@ -28,7 +28,7 @@ RECORDERS = [("SessionStart", "*", "session_start.py"), ("SessionEnd", "*", "ses
              ("PostToolUse", "mcp__claude_ai_Slack__slack_send_message", "slack_link.py"),
              ("PostToolUse", "Skill", "ticket_link.py"),
              ("UserPromptSubmit", "*", "attention.py")]
-ROLES = ("worker", "planner", "relay", "reviewer")
+ROLES = ("worker", "planner", "reviewer")
 
 
 def hooks(settings=CLAUDE / "settings.json", pol=None):
@@ -73,8 +73,6 @@ def skills(pol=None):
         out.mkdir(parents=True, exist_ok=True)
         (out / "SKILL.md").write_text(render(role, pol))
         print(f"rendered: {out / 'SKILL.md'}")
-        if role == "relay":
-            continue  # the relay gets its skill by path, as a system prompt
         for h in sorted(harness.in_use(pol)):  # an "arg" harness gets the folder on its start line instead
             if harness.HARNESSES[h]["skills"] != "link":
                 continue
@@ -89,7 +87,9 @@ def skills(pol=None):
 
 def fill(template):
     # A service manager gives no PATH. The folders of herdr, git and gh go first, for the policy setup commands too.
-    bins = [os.path.dirname(b) for b in (config.HERDR, config.GIT, config.GH) if os.path.isabs(b)]
+    # The daemon starts the Slack poll itself, so the folder of that binary goes in too.
+    bins = [os.path.dirname(b) for b in (config.HERDR, config.GIT, config.GH, shutil.which(harness.POLL_BIN) or "")
+            if os.path.isabs(b)]
     path = ":".join(dict.fromkeys(bins + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]))
     text = (config.HERE / template).read_text()
     for k, v in {"{python}": PY, "{core}": str(config.HERE), "{home}": str(config.HOME), "{path}": path}.items():

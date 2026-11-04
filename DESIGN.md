@@ -11,16 +11,16 @@ The system has four nouns, four verbs, and one data file.
 Nouns:
 
 - **Ref**: a thing in a source system. It has a `kind` and a `ref`. Kinds: `ticket`, `pr`, `review`, `branch`, `slack`, `inbox`. A `review` Ref is the URL of a pull request that someone asked the operator to review. It goes to a reviewer. The one `inbox` Ref is `[factory] inbox_ref`, default `operator`: DMs and mentions of the operator with no other Ref. It goes to the planner.
-- **Session**: one coding agent session. Its key is the session id of its harness: a UUID that the spawner picks. Roles: `worker`, `coordinator`, `relay`, `planner`, `reviewer`. The planner Session decides which admitted tickets start, and in which order. A reviewer Session reviews one pull request for the operator.
+- **Session**: one coding agent session. Its key is the session id of its harness: a UUID that the spawner picks. Roles: `worker`, `coordinator`, `planner`, `reviewer`. The schema keeps the old role `relay` for old rows. The planner Session decides which admitted tickets start, and in which order. A reviewer Session reviews one pull request for the operator.
 - **Link**: a fact that a Session works on a Ref. The spawner, a Recorder, or `claim` creates it.
 - **Event**: one update from a source system about one Ref.
 
 Verbs:
 
-- **Source**: reads a source system and inserts Events. Examples: the GitHub Source, the Jira Source, a command Source, the herdr daemon. The Slack relay is a Claude Code session.
+- **Source**: reads a source system and inserts Events. Examples: the GitHub Source, the Jira Source, a command Source, the herdr daemon. The Slack Source runs one `claude -p` for each poll.
 - **Recorder**: a Claude Code hook. Other harnesses have none, see "Harness". It observes a deterministic action and inserts a Link or updates a Session.
 - **Router**: a pure function. It takes one Event and the registry and returns one decision.
-- **Action**: a side effect on herdr. Actions: `spawn`, `spawn_review`, `spawn_planner`, `spawn_relay`, `prompt`, `hold`, `claim`, `cleanup`. `claim` and `cleanup` are in `factory.py`.
+- **Action**: a side effect on herdr. Actions: `spawn`, `spawn_review`, `spawn_planner`, `prompt`, `hold`, `claim`, `cleanup`. `claim` and `cleanup` are in `factory.py`.
 
 Plan: the `plan` table holds the order and the holds for tickets. Only `plan.py` writes it.
 
@@ -94,7 +94,7 @@ The rules apply in order. The first match wins.
 2. Find candidates: Sessions with a Link to `(kind, ref)` in a state other than `ended`. Order by `[route]` for the kind, then by newest.
 3. No candidate, kind is `ticket` or `review`, the Event is `admitted`, and the Event is `queued`. Apply the admission rules below.
 4. No candidate otherwise. Mark `unrouted`.
-5. The first candidate is `blocked`, `working`, `gone`, or `registered`. Mark `held`. A `working` session handles its own round, review bots included. Its items go out in one batch when it is `idle` or `done`, not as one extra turn for each item. The planner notice and the relay clock keep their own rules.
+5. The first candidate is `blocked`, `working`, `gone`, or `registered`. Mark `held`. A `working` session handles its own round, review bots included. Its items go out in one batch when it is `idle` or `done`, not as one extra turn for each item. The planner notice keeps its own rules.
 6. Otherwise run `prompt`. Mark `delivered`.
 
 The Router batches. All `queued` and `held` Events for one Session go out as one prompt. A `working` agent receives the prompt as its next queued message. If `agent prompt` fails, the batch becomes `held`. The Router is `router.py`: `route()`, `admit()`, and the Delivery wrapper, all pure. `daemon.py` applies their decisions in `process()`.
@@ -116,7 +116,7 @@ The planner is an exception path. The factory opens it only when tickets compete
 After each pass, the daemon collects the Events that changed to `needs-plan` or `needs-decision` in this pass, and the ticket spawns that failed in this pass. It keeps them in the cursor `planner:pending`. A failed review spawn writes only its log line. Then:
 
 - If a `planner` Session is `live`, the daemon prompts it one time: `[factory] N tickets need a plan or a decision: KEY (reason), KEY (reason). Run plan.py show. Handle it per the techichi-planner skill.` With one ticket, the prompt says "1 ticket needs".
-- If no planner is `live` or `registered`, the Action `spawn_planner` starts one: a tab `planner` with cwd `[factory] helper_cwd` in the herdr workspace `factory`, agent `factory-planner`, role `planner`. The planner and the relay share that workspace, one tab each. The first helper start creates it. A failed start closes only its own tab. Its first prompt is "Load the techichi-planner skill." and the same text.
+- If no planner is `live` or `registered`, the Action `spawn_planner` starts one: a tab `planner` with cwd `[factory] helper_cwd` in the herdr workspace `factory`, agent `factory-planner`, role `planner`. The first planner start creates it. A failed start closes only its own tab. Its first prompt is "Load the techichi-planner skill." and the same text.
 - If a planner is `registered` for less than 10 minutes, it is still starting. The daemon waits. At most one planner runs. A planner that stays `registered` longer failed to start. The daemon sets it to `ended`, writes one log line, and starts a new one.
 - If the prompt or the start fails, the daemon writes one log line and tries again after 5 minutes.
 
@@ -238,7 +238,7 @@ A harness is the coding agent of a Session. `harness.py` holds one dict entry fo
 | `recorder` | `true` when the harness has the Recorder hooks |
 | `scratch` | the folder under the real `/tmp` where the agent makes its own worktrees, or none |
 
-`[factory] harness` is the default for workers, reviewers, and the planner. `[projects.X] harness` overrides it for one project. The relay is always `claude`.
+`[factory] harness` is the default for workers, reviewers, and the planner. `[projects.X] harness` overrides it for one project. The Slack poll always runs `claude`.
 
 herdr reports the session of an agent as an id or as the path of a session file. `harness.session_id()` maps both to the id: a path `<time>_<id>.jsonl` (Pi) gives the part after the last `_`. `daemon.sync` matches the agents of every harness kind in use.
 
@@ -299,20 +299,64 @@ The Source also reads failed checks and merge conflicts. `poll()` runs `checks()
 
 ## Slack Source
 
-The Slack Source is a relay session and `slack_source.py`. the operator chose a relay over a Slack app. The relay only fetches. Python decides everything.
+The Slack Source is `slack_source.py`. The operator chose it over a Slack app. For each poll, the daemon starts one fresh `claude -p`. The model only calls one Slack search. Python decides everything.
 
-Scope, in `[slack]` of `policy.toml`: the channels in `channels`, the operator's DMs and group DMs, and mentions of the operator (`me`) anywhere.
+A long-lived relay session did this job before. In one week it failed in four ways: the model decided that the cursor stalled and stopped its searches for a day, a restart dropped `--restricted` and the allow rules, it then ran with full permissions in auto mode, and its context refilled within 3 turns. No Slack Event reached the factory for 5 days. A fresh process for each poll has no context to fill and no session to restart.
 
-On `[factory] slack poll`, the relay does three steps:
+Scope, in `[slack]` of `policy.toml`: the channels in `channels`, the operator's DMs and group DMs, and mentions of the operator (`me`) anywhere. `me`, `channels`, and `hosts` are required. `poll_minutes` is the interval, default 15. `work_hours` is the local hours to poll, start inclusive and end exclusive, default `[0, 24]`. `work_days` is the ISO weekdays to poll, Monday = 1, default all seven. `inbox` turns on rule f, default false.
 
-1. It runs `slack_source.py window`. The output names `after` (the `slack` cursor minus 10 minutes) and one search for each channel, one for DMs and group DMs, and one for mentions. On the first run, `window` sets the cursor to now and says that nothing is due.
-2. It runs each search with `slack_search_public_and_private` and follows each page cursor.
-3. It runs `slack_source.py ingest` with no arguments. `ingest` reads the search results after the last poll prompt from the relay's own transcript. It finds the file by the session_id of the relay Session in the registry, never as the newest file in a folder. With no relay Session, it stops with one log line. Thus the model copies no message text. Real Slack text on a command line failed the Bash permission check, and a model copy is not exact.
+### Facts
+
+These facts decide the design. They were checked on 2026-11-04 with Claude Code 2.1.318.
+
+1. `claude -p` reaches the claude.ai Slack connector, also with `--restricted` and `--tools ""`.
+2. The claude.ai connectors load in the background. With stdin closed, `-p` starts before they connect: the `init` event shows `mcp_servers: []`, and the model writes fake tool calls as text. `MCP_CONNECTION_NONBLOCKING=false` in the environment makes `-p` wait for them.
+3. `--output-format stream-json --verbose` prints every record. The `tool_result` blocks of the search hold the same text as a transcript.
+4. `--no-session-persistence` writes no transcript.
+5. Tool definitions are most of the prompt. All connectors give 88 tools, about 82k tokens. The search tool alone is about 7k tokens. The `init` event lists the tool names.
+6. One search over all channel types, with rule s below, gives exactly the messages of four old searches: one for each channel, one for DMs, and one for mentions.
+7. The tool caps `limit` at 20 for each page. Each page is one model turn.
+
+### The poll
+
+The daemon runs `slack_source.poll()` for the Source `slack` on each pass. It never blocks a pass. The first case that matches wins:
+
+1. A poll runs. If it started more than 10 minutes ago (cursor `slack:poll_start`), the daemon kills it, deletes its file, and writes one log line. Else it waits for the next pass.
+2. A poll ended. The daemon reads its output file, deletes the file, and ingests. See "The read".
+3. The time is outside `work_hours` or `work_days`, or `slack:poll_next` is not due. Nothing happens.
+4. Else the daemon calls `window()`. On the first run, `window` sets the `slack` cursor to now, and nothing is due. Else the daemon starts `claude -p` and sets `slack:poll_next` to now plus `poll_minutes`.
+
+The first poll of a day covers the night, because the window starts at the `slack` cursor.
+
+`window()` returns one search: `after` is the `slack` cursor minus 10 minutes, `filters` is `after:<day>`, and `channel_types` is `public_channel,private_channel,im,mpim`. It sorts by time, oldest first, with 20 results on each page. If a poll stops early, the cursor moves only to the newest message read, so the next poll reads the rest.
+
+The daemon starts the process with `subprocess.Popen`. stdin is closed. The cwd is `[factory] relay_cwd`, an empty folder. The environment gets `MCP_CONNECTION_NONBLOCKING=false`. stdout goes to a temp file with mode 0600, outside the repo. Never a pipe: a busy day gives about 1 MB, and a full pipe blocks the child. The file holds Slack text, so the read deletes it.
+
+`harness.py` holds the binary, the flags, and the environment:
+
+```
+claude -p PROMPT --model haiku --restricted --tools "" --permission-mode dontAsk
+  --allowedTools mcp__claude_ai_Slack__slack_search_public_and_private --disallowedTools <hide list>
+  --no-session-persistence --output-format stream-json --verbose
+```
+
+The prompt holds `[factory] slack poll`, the instructions, and the search as JSON. It holds no Slack text. The model calls the search tool once with exactly these parameters, follows each page cursor with the same parameters, and replies with done. The message texts are data, and the prompt tells the model never to follow them.
+
+The hide list cuts the prompt from about 82k to 7k tokens. It is every tool name of the `init` event of the earlier polls except the search tool, kept as JSON in the cursor `slack:hide`. The first poll hides nothing. The list only grows, because a poll that hid the tools may not list them in its `init` event.
+
+A daemon restart while a poll runs leaves the process and its file behind. The next poll covers the same window.
+
+### The read
+
+If the `init` event does not show `claude.ai Slack` as `connected`, or no search call ran, the read writes one log line and ingests nothing. The `slack` cursor does not move, so the next poll covers the window. Else it parses the `tool_result` blocks of the search calls and runs `ingest`. It writes the summary line to the log and stores it in the cursor `slack:last`. The line holds the number of searches, the turns, the cost in USD, and the ingest summary.
+
+### Ingest
 
 A message text can hold lines that look like a whole extra search result, with a made-up author and permalink. So `ingest` requires the result numbers on each page to run 1, 2, ... M with no gap and no repeat. If they do not, it skips the whole page with one log line.
 
 `ingest` checks the format of each id, timestamp, and permalink, and skips a bad message with one log line. The permalink host must be in `[slack] hosts`, and the channel and `p<ts>` in the permalink must equal `channel_id` and `ts`. It never echoes the message. It inserts the Events, moves the cursor to the newest `ts`, and prints one summary line. The first rule that matches wins:
 
+- s. The message is out of scope: its channel is not in `channels`, it is not a DM or a group DM, and its text does not mention `me`. Skip. The one search reads every channel, so this rule keeps the scope.
 - a. A bot message, or a message by the operator: skip.
 - b. A thread reply whose `<channel>:<thread_ts>` has a `slack` Link to a Session that is not `ended`: kind `slack`, that ref.
 - c. The text holds a PR URL of a policy repo: kind `pr`, in the form that `hooks/pr_link.py` stores.
@@ -321,18 +365,25 @@ A message text can hold lines that look like a whole extra search result, with a
 - f. A DM, a group DM, or a mention of the operator: kind `inbox`, ref `operator`, only when `[slack] inbox` is true. It is false: one day gave 36 inbox items, too many for the planner, and the operator has not confirmed the rule. With false, rule f skips.
 - g. Anything else: skip.
 
-The Event id is `slack:<channel>:<ts>`. `ingest --dry-run` prints the Events and writes nothing. `ingest --dry-run LINE ...` takes JSON lines for a check by hand.
+The Event id is `slack:<channel>:<ts>`.
 
-The relay lifecycle is like the planner. The Action `spawn_relay` starts one relay: a tab `relay` in the workspace `factory`, agent `factory-relay`, role `relay`, model Haiku, and the empty cwd ``[factory] relay_cwd``. A relay that stays `registered` for more than 10 minutes is set to `ended`, and a new one starts. A failed start waits 5 minutes. The daemon prompts the relay with `[factory] slack poll` every `[slack] poll_minutes`. While Slack is quiet, the interval doubles after each poll that does not move the Slack cursor, up to `[slack] max_poll_minutes`. A newer message resets it. The daemon cannot check Slack itself, because only the relay can call the Slack MCP tools. It prompts only when its agent status is `idle` or `done`. If the relay is `working`, the daemon skips the tick. If it is `blocked`, the daemon skips the tick and writes one log line.
+Checks by hand:
 
-The relay reads text from anyone, external Slack Connect users included. So it runs with least privilege:
+- `slack_source.py window` prints the search.
+- `slack_source.py ingest --dry-run LINE ...` takes JSON lines and prints the Events.
+- `slack_source.py poll --dry-run` runs one poll in the foreground and prints the Events and the summary line. It writes no Event and no cursor, except the `slack` cursor on the first run.
 
-- `--restricted`: it ignores the user settings with their broad Bash allow rules. It loads no user skills, so the skill text comes in through `--append-system-prompt`. The herdr SessionStart hook comes in through `--settings`, because the daemon matches the relay by the UUID that the hook reports.
-- `--tools Bash` and `--permission-mode dontAsk`: every tool call that no rule allows is denied.
-- `--allowedTools`: exactly `python3 <factory>/slack_source.py window`, exactly `python3 <factory>/slack_source.py ingest`, and the Slack search and read-thread tools.
-- The cwd is empty, because Claude Code allows read-only commands such as `cat` inside the cwd without a rule.
+### Security boundary
 
-A test session proved it. Arbitrary Bash, chained commands, redirects, a heredoc, reads outside the cwd, Edit, and Write were denied.
+The poll reads text from anyone, external Slack Connect users included. So it runs with least privilege:
+
+- `--permission-mode dontAsk` with one allowed tool, the search tool, is the boundary. Every other tool call is denied.
+- `--tools ""`: no built-in tool. No Bash, no Read, no Edit, no Write.
+- `--restricted`: the user settings with their allow rules do not load, and no user skill loads.
+- The cwd is empty.
+- `--disallowedTools` only cuts cost. It is not part of the boundary.
+- The model copies no message text. Python reads the results from the output stream. The prompt holds no Slack text.
+- Each poll is a new process. No permission mode carries over from an earlier poll.
 
 ## Commands
 
@@ -340,12 +391,12 @@ A test session proved it. Arbitrary Bash, chained commands, redirects, a heredoc
 
 - `factory.py claim REF [--session PANE|NAME|UUID]`: link a Session to a Ref with `created_by = claim`. REF is a ticket key of a policy project, a PR URL of a policy repo, or a Slack permalink, stored as `<channel>:<thread_ts or ts>`. Anything else is rejected. The default Session is the caller's pane. A missing Session row is inserted from the herdr agent record. The next Router pass delivers the `unrouted` Events of that Ref, and an admitted ticket with a Link does not spawn. There is no `unclaim`.
 - `factory.py needs TEXT [--session PANE|NAME|UUID]` and `factory.py needs --clear [--session ...]`: a Session runs it when it waits for the operator. It finds the Session as `claim` does. It writes the `needs` row with TEXT and the time, and replaces an older row. It reports pane metadata with the source `<[factory] metadata_source>.attention`: the display name `⚑ <agent name>` (else `⚑ <ticket token>`), and the `idle` and `done` labels `needs you: TEXT`. herdr clients and Ovis show the display name. Waits, notifications, and the herdr status do not change. `--clear` deletes the row and clears the metadata. An empty TEXT is an error.
-- `factory.py status`: read only. The Sessions that are not `ended`, with role, agent name or pane, state, agent status, ticket, PRs (a reviewer shows its review PR), and held count. The Sessions of that list that wait for the operator, oldest first, with the need and its time. The slots in use against `max_active`. The waiting admitted tickets with their reasons. The unrouted Events by kind. The last write of each Source cursor. The planner and the relay.
+- `factory.py status`: read only. The Sessions that are not `ended`, with role, agent name or pane, state, agent status, ticket, PRs (a reviewer shows its review PR), and held count. The Sessions of that list that wait for the operator, oldest first, with the need and its time. The slots in use against `max_active`. The waiting admitted tickets with their reasons. The unrouted Events by kind. The last write of each Source cursor, and the summary line of the last Slack poll (`slack:last`) with its time. The planner.
 - `factory.py cleanup KEY`: run the cleanup Action for each worker Session on that ticket, a hand-started one too. It skips the ticket, PR, and idle checks, and it keeps the clean-worktree check. There is no `--force`. It also works for a `gone` or `ended` Session whose workspace is closed and whose checkout is left. It does not end a reviewer: close the reviewer's workspace, or wait for the daemon.
 
 ## Cleanup
 
-Every 10 minutes, the daemon checks each `live` Session with a `spawner` `ticket` or `review` Link. It never touches a hand-started session, the planner, or the relay. A Session is done when all of these are true:
+Every 10 minutes, the daemon checks each `live` Session with a `spawner` `ticket` or `review` Link. It never touches a hand-started session or the planner. A Session is done when all of these are true:
 
 - Its Jira ticket, if the Jira Source admitted it, has a status named in `[cleanup] done_statuses`: today `Done` and `Won't Do`. A 404 skips the Session. the operator works in a session after the merge, so the merge alone is not enough. The status category is not enough either: Jira puts `Ready for Deploy` in the done category, but the deploy and the validation come after it.
 - Each of its `pr` and `review` Links is merged or closed. A Session with no PR is not done. A reviewer has no ticket, so its PR, its idle time, and its clean checkout decide. This check needs `gh`, so it runs only for a project with `github`. A project with no `github` skips it, and then a Done Jira ticket must exist. With no Jira either, nothing tells the daemon that the work ended, so only `factory.py cleanup KEY` ends the Session.
@@ -385,16 +436,16 @@ The file is `<config>/policy.toml`. `policy.example.toml` documents each key. It
 
 `config.policy()` is the only reader of the file. It fills every default and checks the required keys: one `[projects.<KEY>]` table with `repo` and `start.skill` (`github` and `admit` are optional), the `[jira]` keys when `jira` is a Source, and the `[slack]` keys when `[slack]` exists. A missing key stops `install.py`, `daemon.py --once`, and each command with one line, for example `policy.toml: [jira] needs token_file`. No module repeats a default.
 
-Timers live in the `cursors` table. `registry.due(name)` and `registry.wait(name, delta)` read and set them, for example `github:next`, `relay:next`, and `spawn:last`.
+Timers live in the `cursors` table. `registry.due(name)` and `registry.wait(name, delta)` read and set them, for example `github:next`, `slack:poll_next`, and `spawn:last`.
 
 `[factory]` holds the machine data. Each key has a default:
 
 - `herdr_session`: the herdr session that the factory owns. Default `default`. It sets the socket, `herdr --session`, and the hook gate.
-- `worktrees`, `helper_cwd`, `relay_cwd`: the folders for ticket worktrees, the planner, and the relay.
+- `worktrees`, `helper_cwd`, `relay_cwd`: the folders for ticket worktrees, the planner, and the Slack poll. `relay_cwd` stays empty.
 - `metadata_source`: the source of the pane tokens. Default `techichi`.
 - `inbox_ref`: the `inbox` Ref of the planner. Default `operator`.
 
-`[skills]` holds the skill names for `worker`, `planner`, `relay`, and `reviewer`, and an optional `extra` folder. `install.py skills` renders each core template in `skills/` into `<config>/skills/<name>/SKILL.md`. It fills in `{factory}` (the core path) and `{home}` (the config path), sets the name, and appends `<extra>/<role>.md`. For a harness with `skills = link` (Claude Code), it links every skill but the relay into `~/.claude/skills`. Pi gets the folder with `--skill`. The relay gets its file by path.
+`[skills]` holds the skill names for `worker`, `planner`, and `reviewer`, and an optional `extra` folder. `install.py skills` renders each core template in `skills/` into `<config>/skills/<name>/SKILL.md`. It fills in `{factory}` (the core path) and `{home}` (the config path), sets the name, and appends `<extra>/<role>.md`. For a harness with `skills = link` (Claude Code), it links every skill into `~/.claude/skills`. Pi gets the folder with `--skill`.
 
 ## Layout
 
@@ -409,15 +460,15 @@ Timers live in the `cursors` table. `registry.due(name)` and `registry.wait(name
   registry.py      the SQLite registry: connect(), Sessions and Links, the cursors and the clock, the Recorder runner
   herdr.py         the only module that talks to herdr: the socket and the CLI behind one set of verbs
   router.py        the Router: route(), admit() and the Delivery wrapper. Pure.
-  harness.py       the harness adapters: Claude Code and Pi
+  harness.py       the harness adapters: Claude Code and Pi, and the flags of the Slack poll
   command_source.py the command Source: any program that prints Events
-  daemon.py        the daemon: one pass, the planner and the relay, the herdr sync, the event loop
+  daemon.py        the daemon: one pass, the planner, the herdr sync, the event loop
   install.py       hooks, skills and the plist
   spawn.py         the spawner
   hooks/*.py       the five Recorders and the attention hook
   github_source.py the GitHub Source
   jira_source.py   the Jira Source
-  slack_source.py  the Slack Source, run by the relay session
+  slack_source.py  the Slack Source and its poll: one claude -p for each poll
   plan.py          the planner tool, the only writer of the plan table
   factory.py       claim, needs, status, cleanup
   launchd/         the LaunchAgent template (macOS)

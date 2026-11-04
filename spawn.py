@@ -204,7 +204,7 @@ def spawn_helper(role, cwd, kind_and_args, first, db=None):
         herdr.start_agent(f"factory-{role}", pane, *kind_and_args(sid))
     except Exception:
         end(con, sid)
-        if tab:  # close only this tab. The other helper keeps running in the same workspace.
+        if tab:  # close only this tab, never the workspace
             try:
                 herdr.tab_close(tab)
             except Exception as e:
@@ -223,37 +223,6 @@ def spawn_planner(text, db=None):
                         lambda sid: (harness.HARNESSES[name]["kind"],
                                      harness.start_args(name, sid, pol, [skill_dir(pol, "planner")])),
                         f"Load the {pol['skills']['planner']} skill. " + text, db)
-
-
-def relay_skill_file(pol=None):
-    """The rendered relay skill. install.py writes it. It names the same slack_source.py as relay_args."""
-    return skill_dir(pol or config.policy(), "relay") / "SKILL.md"
-
-
-def relay_args():
-    """Least privilege for a session that reads text from anyone, external Slack Connect users included.
-    --restricted ignores the user settings with their broad Bash allow rules, and it loads no user skills.
-    So the skill text comes in as a system prompt, and the herdr SessionStart hook comes in through --settings,
-    because the daemon matches the relay by the UUID that this hook reports. dontAsk denies every tool call
-    that no rule allows. Verified on 2026-10-28: arbitrary Bash, chained commands, redirects, reads outside
-    the cwd, Edit and Write are denied. Real Slack text on the ingest command line was denied too, so ingest
-    takes no input from the model: it parses the search results from the relay's own transcript."""
-    script = config.HERE / "slack_source.py"
-    skill = relay_skill_file()  # by path: herdr rejects an argument with a newline
-    # The herdr Claude integration installs this hook. The relay needs it through --settings.
-    hook = {"hooks": {"SessionStart": [{"matcher": "*", "hooks": [
-        {"type": "command", "command": f"bash {harness.CLAUDE / 'hooks/herdr-agent-state.sh'} session", "timeout": 5}]}]}}
-    return ("--restricted", "--model", "haiku", "--tools", "Bash", "--permission-mode", "dontAsk",
-            "--allowedTools", f"Bash(python3 {script} window)", f"Bash(python3 {script} ingest)",
-            "mcp__claude_ai_Slack__slack_search_public_and_private", "mcp__claude_ai_Slack__slack_read_thread",
-            "--settings", json.dumps(hook), "--append-system-prompt-file", str(skill))
-
-
-def spawn_relay(text, db=None):
-    # The relay is Claude Code only: it needs the claude.ai Slack connector and the Claude transcript.
-    # The cwd stays empty on purpose: read-only commands are open inside the cwd.
-    return spawn_helper("relay", str(config.policy()["factory"]["relay_cwd"]),
-                        lambda sid: ("claude", ["--session-id", sid, *relay_args()]), text, db)
 
 
 if __name__ == "__main__":
