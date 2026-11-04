@@ -95,8 +95,9 @@ def activities(note, since, fetch=gh_all, login=me, project=None):
         for e in fetch(f"{base}/issues/{m[2]}/events?{page}"):
             if (e.get("event") == "review_requested" and (e.get("requested_reviewer") or {}).get("login") == login()
                     and new(e.get("created_at"))):
+                # Never self: the operator who asks for their own review wants the review.
                 out.append(ev("review_request", e["id"], "review requested", e.get("review_requester"), e["created_at"],
-                              ref, "review", admitted=True, project=project))
+                              ref, "review", self=False, admitted=True, project=project))
     return out
 
 

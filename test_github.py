@@ -169,7 +169,7 @@ finally:
 assert [e["id"] for e in got] == ["gh:review:999"] and got[0]["payload"]["actor"] == CR
 
 # Review requests: one admitted review Event for each request of the operator in the window. A request for someone
-# else, a team request, and an old request make none. A request by the operator is self.
+# else, a team request, and an old request make none. A request by the operator is not self: they want the review.
 EVS = [{"id": i, "event": "review_requested", "created_at": at, "review_requester": user(by), **who}
        for i, at, by, who in ((81, "2026-10-28T15:40:00Z", "alice", {"requested_reviewer": user(ME)}),
                               (82, "2026-10-28T15:40:00Z", "alice", {"requested_reviewer": user("bob")}),
@@ -185,7 +185,7 @@ assert [e["id"] for e in got] == ["gh:review_request:81", "gh:review_request:85"
 assert got[0] == {"id": "gh:review_request:81", "source": "github", "kind": "review", "ref": P5,
                   "payload": {"what": "review requested", "actor": "alice", "at": "2026-10-28T15:40:00Z", "url": P5,
                               "self": False, "admitted": True, "project": "APP"}}
-assert got[1]["payload"]["self"] is True
+assert got[1]["payload"]["self"] is False
 assert g.activities(note("r2", "acme/app", 5, "2026-10-28T15:45:00Z"), "2026-10-28T15:30:00Z", events, login) == []
 # The poll names the project whose github is the repo, case free.
 with contextlib.redirect_stdout(io.StringIO()) as out:

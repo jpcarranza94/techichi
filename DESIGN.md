@@ -269,7 +269,7 @@ Admission is a property of an Event: `kind = ticket` and `admitted = true`. The 
   - reviews by `submitted_at`: `gh:review:<id>`, what `review <state>`.
   - review comments by `created_at`: `gh:review_comment:<id>`, what `review comment`. A review comment whose review is in the same list is skipped, because the review covers it. GitHub also makes each reply to a review comment its own review.
   - commits by committer date: `gh:commit:<sha>`, what `push`.
-  - review requests, only when the notification `reason` is `review_requested`: the issue events by `created_at` with `event = review_requested` and `requested_reviewer` equal to the `gh` login. Each one is `gh:review_request:<id>`, kind `review`, what `review requested`, actor `review_requester`, `admitted` true, and `project` the policy project of the repo. A team request names no `requested_reviewer`, so it makes no Event.
+  - review requests, only when the notification `reason` is `review_requested`: the issue events by `created_at` with `event = review_requested` and `requested_reviewer` equal to the `gh` login. Each one is `gh:review_request:<id>`, kind `review`, what `review requested`, actor `review_requester`, `admitted` true, `self` always false, and `project` the policy project of the repo. A request that the operator made for themselves still starts a review. A team request names no `requested_reviewer`, so it makes no Event.
 - Each Event has the activity's own actor and `html_url`. `self` is true when the actor is the `gh` login, so the session's own pushes and replies are dropped.
 - A notification update with no new activity makes no Event. That covers comment edits and CI runs.
 
