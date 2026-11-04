@@ -46,7 +46,7 @@ s.write_text(json.dumps({"hooks": {"SessionEnd": [{"matcher": "*", "hooks": [
 with contextlib.redirect_stdout(io.StringIO()):
     install.hooks(s)
 h = json.loads(s.read_text())["hooks"]
-assert [len(h[e]) for e in ("SessionEnd", "SessionStart", "Stop", "UserPromptSubmit")] == [1, 1, 1, 1], h
+assert [len(h[e]) for e in ("SessionEnd", "SessionStart", "UserPromptSubmit")] == [1, 1, 1] and "Stop" not in h, h
 
 # --- A fresh install: a temp HOME, a policy with one command Source, no GitHub, no gh, no Jira, no Slack ---
 home = Path(tempfile.mkdtemp(dir="/tmp" if os.path.isdir("/tmp") else None)).resolve()  # a short socket path

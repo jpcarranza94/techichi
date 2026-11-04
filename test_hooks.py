@@ -64,25 +64,36 @@ fire("session_start.py", {"session_id": "r2", "cwd": d, "source": "clear"}, pane
 assert q("SELECT kind, ref FROM links WHERE session_id = 'r2'") == [("review", "https://github.com/acme/app/pull/7")]
 assert q("SELECT role FROM sessions WHERE session_id = 'r2'") == [("reviewer",)]
 
-# attention.py: a "Needs you:" line in the last reply marks the pane. Any other reply or a new prompt clears it.
+# attention.py: an operator prompt clears the flag of the pane. A "[factory]" item and a Stop keep it.
 herdr_log = Path(d) / "herdr.log"
 fake = Path(d) / "herdr"
-fake.write_text("#!/bin/sh\n"
-                f"echo \"$*\" >> {herdr_log}\n"
-                'echo \'{"result": {"agent": {"name": null, "agent": "claude", "tokens": {"ticket": "APP-1"}}}}\'\n')
+fake.write_text(f"#!/bin/sh\necho \"$*\" >> {herdr_log}\n")
 fake.chmod(0o755)
 os.environ["TECHICHI_HERDR"] = str(fake)
-fire("attention.py", {"session_id": "s3", "hook_event_name": "Stop",
-                      "last_assistant_message": "The plan is ready.\n\n**Needs you:** approve the plan."})
-fire("attention.py", {"session_id": "s3", "hook_event_name": "UserPromptSubmit", "prompt": "Needs you: no"})
-fire("attention.py", {"session_id": "s3", "hook_event_name": "Stop", "last_assistant_message": "It needs your review."})
-src = "--session default pane report-metadata wX:p1 --source techichi.attention"
-assert herdr_log.read_text().splitlines() == [
-    "--session default agent get wX:p1",
-    f"{src} --display-agent \u2691 APP-1 --state-label idle=needs you: approve the plan. "
-    "--state-label done=needs you: approve the plan.",
-    f"{src} --clear-display-agent --clear-state-labels",
-    f"{src} --clear-display-agent --clear-state-labels"], herdr_log.read_text()
+
+
+def need(sid):
+    sqlite3.connect(DB, isolation_level=None).execute(
+        "INSERT INTO needs (session_id, text, at) VALUES (?, 'approve the plan', '2026-11-01T10:00:00Z')", (sid,))
+
+
+def calls():
+    return herdr_log.read_text().splitlines() if herdr_log.exists() else []
+
+
+fire("attention.py", {"session_id": "s3", "hook_event_name": "Stop", "last_assistant_message": "Needs you: x"})
+need("s3")
+fire("attention.py", {"session_id": "s3", "hook_event_name": "Stop", "last_assistant_message": "Needs you: x"})
+fire("attention.py", {"session_id": "s3", "hook_event_name": "UserPromptSubmit", "prompt": " [factory] 1 item for APP-1."})
+assert q("SELECT text FROM needs") == [("approve the plan",)] and calls() == []
+fire("attention.py", {"session_id": "s3", "hook_event_name": "UserPromptSubmit", "prompt": "approved"})
+fire("attention.py", {"session_id": "s3", "hook_event_name": "UserPromptSubmit", "prompt": "thanks"})  # no row: no call
+clear = "--session default pane report-metadata wX:p1 --source techichi.attention --clear-display-agent --clear-state-labels"
+assert q("SELECT * FROM needs") == [] and calls() == [clear], calls()
+# /clear: the new Session s4 of the pane clears the row of the older Session s3.
+need("s3")
+fire("attention.py", {"session_id": "s4", "hook_event_name": "UserPromptSubmit", "prompt": "go on"})
+assert q("SELECT * FROM needs") == [] and calls() == [clear, clear], calls()
 
 # Bad input never fails the hook.
 fire("pr_link.py", "not json")

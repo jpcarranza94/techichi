@@ -57,3 +57,10 @@ CREATE TABLE IF NOT EXISTS plan (
   updated_by TEXT,
   updated_at TEXT
 );
+
+-- What a Session waits for from the operator. factory.py needs writes it. The attention hook deletes it.
+CREATE TABLE IF NOT EXISTS needs (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(session_id),
+  text       TEXT NOT NULL,
+  at         TEXT NOT NULL
+);

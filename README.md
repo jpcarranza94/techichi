@@ -15,7 +15,7 @@ The factory is a small Python daemon for macOS and Linux. It uses only the Pytho
 3. The session runs your start skill for the ticket. It stops after the plan, if you ask for a checkpoint.
 4. Comments, reviews, and pushes on the ticket and its pull requests become Events.
 5. The daemon sends each Event to its session as one short prompt with a link. The session reads the item at its link.
-6. When a session needs you, it says so in plain text and ends the reply with a `Needs you:` line. A hook puts a flag on its pane, so a herdr client or a phone client such as Ovis shows which session waits for you. Claude Code only.
+6. When a session needs you, it runs `factory.py needs` and says what it needs in plain text. The command puts a flag on its pane, so a herdr client or a phone client such as Ovis shows which session waits for you, and `factory.py status` lists it. With Claude Code, a hook clears the flag when you write in that pane. Pi has no hooks, so there only `factory.py needs --clear` clears it.
 7. When someone asks you to review a pull request in a project repo on GitHub, the spawner starts a reviewer session on the PR head. It writes an overview and a review, and it asks you what to post.
 
 ## Prerequisites
@@ -68,7 +68,7 @@ Do these steps in order. Run the commands in a shell inside herdr.
    python3 ~/techichi/install.py
    ```
 
-   It renders the skills into `~/.config/techichi/skills/`. For Claude Code, it also adds the five Recorder hooks and the attention hook to `~/.claude/settings.json`, keeps a backup next to it, and links the worker, the planner, and the reviewer skill into `~/.claude/skills/`. Pi gets the skill folder on its start line, so nothing goes into `~/.pi`. On macOS it writes `~/.config/techichi/techichi.plist`. On Linux it writes `~/.config/systemd/user/techichi.service`. A bad policy stops the install with one line that names the missing key.
+   It renders the skills into `~/.config/techichi/skills/`. For Claude Code, it also adds the five Recorder hooks and the `UserPromptSubmit` attention hook to `~/.claude/settings.json`, keeps a backup next to it, and links the worker, the planner, and the reviewer skill into `~/.claude/skills/`. Pi gets the skill folder on its start line, so nothing goes into `~/.pi`. On macOS it writes `~/.config/techichi/techichi.plist`. On Linux it writes `~/.config/systemd/user/techichi.service`. A bad policy stops the install with one line that names the missing key.
 
 6. Do one pass by hand. Read the output for errors:
 

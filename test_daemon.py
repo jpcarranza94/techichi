@@ -401,4 +401,14 @@ started.clear()
 run(never, prompt=never)
 assert status("rv3")[0] == "unrouted" and status("rv3")[2].startswith("spawn failed") and not started
 daemon.review_action = never
+# After a herdr restart, apply_tokens puts the operator flag back on a live pane, not on an ended one.
+flags = []
+daemon.herdr.report_ticket = lambda pane, key: None
+daemon.herdr.report_attention = lambda pane, need: flags.append((pane, need))
+session("flag-live")
+session("flag-ended", state="ended")
+con.execute("INSERT INTO needs (session_id, text, at) VALUES ('flag-live', 'approve the plan', '2026-11-01T10:00:00Z'), "
+            "('flag-ended', 'stale', '2026-11-01T10:00:00Z')")
+daemon.apply_tokens(con)
+assert flags == [("p-flag-live", "approve the plan")], flags
 print("ok")

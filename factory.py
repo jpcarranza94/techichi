@@ -2,6 +2,7 @@
 """The operator's commands for the factory. See DESIGN.md section "Commands".
 
   factory.py claim REF [--session PANE|NAME|UUID]   link a Session to a ticket, a PR, or a Slack thread
+  factory.py needs TEXT [--session ...]             flag a Session for the operator. --clear removes the flag.
   factory.py status                                 the whole factory, read only
   factory.py cleanup KEY                            end the worker Session of a ticket and remove its checkout
 """
@@ -55,8 +56,9 @@ def parse_ref(pol, text):
     raise ValueError("REF must be a ticket key of a policy project, a PR URL of a policy repo, or a Slack permalink")
 
 
-def claim(con, pol, text, target=None):
-    kind, ref = parse_ref(pol, text)
+def session_of(con, pol, target=None):
+    """(agent record, session id) of a pane id, an agent name, or a session UUID. Default: the caller's pane.
+    A missing Session row is inserted from the agent record."""
     target = target or os.environ.get("HERDR_PANE_ID")
     if not target:
         raise ValueError("no --session and no HERDR_PANE_ID: run it inside a herdr pane or name the session")
@@ -69,8 +71,32 @@ def claim(con, pol, text, target=None):
                     f"last_seen) VALUES (?, 'worker', ?, ?, ?, ?, ?, 'live', {NOW})",
                     (sid, registry.project_for_cwd(a.get("cwd") or ".", pol), a.get("cwd"), a.get("pane_id"),
                      a.get("workspace_id"), a.get("agent_status")))
+    return a, sid
+
+
+def claim(con, pol, text, target=None):
+    kind, ref = parse_ref(pol, text)
+    a, sid = session_of(con, pol, target)
     registry.link(con, kind, ref, sid, "claim")
     return kind, ref, sid, a.get("name") or a.get("pane_id")
+
+
+# --- needs ---------------------------------------------------------------------------------------------------
+
+def needs(con, pol, text, target=None, clear=False):
+    """Flag a Session for the operator, or clear its flag. Returns the line to print."""
+    text = (text or "").strip()
+    if not text and not clear:
+        raise ValueError("TEXT is empty: name the need in a few words, or use --clear")
+    a, sid = session_of(con, pol, target)
+    who = a.get("name") or a.get("pane_id")
+    if clear:
+        con.execute("DELETE FROM needs WHERE session_id = ?", (sid,))
+        herdr.report_attention(a["pane_id"], None)
+        return f"Cleared the flag of {who}"
+    con.execute(f"INSERT OR REPLACE INTO needs (session_id, text, at) VALUES (?, ?, {NOW})", (sid, text))
+    herdr.report_attention(a["pane_id"], text)
+    return f"Flagged {who} for the operator: {text}"
 
 
 # --- status --------------------------------------------------------------------------------------------------
@@ -92,6 +118,10 @@ def status(con, pol, names=None):
         who = names.get(s["session_id"]) or s["pane_id"] or "-"
         out.append(f"  {s['session_id'][:8]} {s['role']:<11} {who:<20} {s['state']:<10} {s['agent_status'] or '-':<8} "
                    f"ticket {tickets:<10} PR {prs:<10} held {held}")
+    need = con.execute("SELECT s.session_id, s.pane_id, n.text, n.at FROM needs n JOIN sessions s USING (session_id) "
+                       "WHERE s.state != 'ended' ORDER BY n.at").fetchall()
+    out.append(f"Needs you: {len(need)}")
+    out += [f"  {names.get(n['session_id']) or n['pane_id'] or '-'} {n['text']} since {n['at']}" for n in need]
     out.append(f"Slots: {registry.slots_used(con)} of {pol['spawn']['max_active']} in use")
     wait = con.execute("SELECT ref, reason FROM events WHERE kind = 'ticket' AND status = 'queued' "
                        "AND json_extract(payload, '$.admitted') ORDER BY created_at").fetchall()
@@ -337,6 +367,10 @@ def main(argv=None):
     c = sub.add_parser("claim")
     c.add_argument("ref")
     c.add_argument("--session", help="pane id, agent name, or Claude session UUID. Default: this pane.")
+    n = sub.add_parser("needs")
+    n.add_argument("text", nargs="?", default="")
+    n.add_argument("--clear", action="store_true", help="remove the flag")
+    n.add_argument("--session", help="pane id, agent name, or Claude session UUID. Default: this pane.")
     sub.add_parser("status")
     k = sub.add_parser("cleanup")
     k.add_argument("key")
@@ -346,6 +380,8 @@ def main(argv=None):
         if a.cmd == "claim":
             kind, ref, sid, who = claim(con, pol, a.ref, a.session)
             print(f"Linked {kind} {ref} to Session {sid} ({who}).")
+        elif a.cmd == "needs":
+            print(needs(con, pol, a.text, a.session, a.clear))
         elif a.cmd == "status":
             print(status(con, pol))
         else:

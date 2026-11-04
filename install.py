@@ -27,7 +27,7 @@ RECORDERS = [("SessionStart", "*", "session_start.py"), ("SessionEnd", "*", "ses
              ("PostToolUse", "Bash", "pr_link.py"),
              ("PostToolUse", "mcp__claude_ai_Slack__slack_send_message", "slack_link.py"),
              ("PostToolUse", "Skill", "ticket_link.py"),
-             ("Stop", "*", "attention.py"), ("UserPromptSubmit", "*", "attention.py")]
+             ("UserPromptSubmit", "*", "attention.py")]
 ROLES = ("worker", "planner", "relay", "reviewer")
 
 

@@ -82,6 +82,24 @@ import daemon  # noqa: E402
 ev = con.execute("SELECT * FROM events WHERE id = 'j1'").fetchone()
 assert daemon.route(con, ev, {**pol, "spawn": {"max_active": 10}})[:2] == ("delivered", SID)
 
+# --- needs: a row and a flag. Again replaces the text. --clear deletes the row. Empty text fails. ---
+flags = []
+herdr.report_attention = lambda pane, need: flags.append((pane, need))
+needs = lambda: [tuple(r) for r in con.execute("SELECT session_id, text FROM needs")]
+assert f.needs(con, pol, " approve the plan ", "web-690-hand") == "Flagged web-690-hand for the operator: approve the plan"
+f.needs(con, pol, "choose a branch", "w4:p5")
+assert needs() == [(SID, "choose a branch")] and flags == [("w4:p5", "approve the plan"), ("w4:p5", "choose a branch")]
+f.needs(con, pol, "", "w4:p5", clear=True)
+assert needs() == [] and flags[-1] == ("w4:p5", None)
+try:
+    f.needs(con, pol, "  ", "w4:p5")
+    raise AssertionError("empty need")
+except ValueError:
+    assert len(flags) == 3
+f.needs(con, pol, "approve the plan", "w4:p5")
+con.execute("INSERT INTO sessions (session_id, role, state) VALUES ('flag-old', 'worker', 'ended')")
+con.execute("INSERT INTO needs (session_id, text, at) VALUES ('flag-old', 'stale', '2026-10-01T10:00:00Z')")
+
 # --- status on the scratch database ---
 con.execute("INSERT INTO sessions (session_id, role, state, pane_id) VALUES ('pl', 'planner', 'live', 'wT:p1')")
 con.execute("INSERT INTO cursors (source, value, updated_at) VALUES ('github', '2026-10-28T16:40:45Z', '2026-10-28T16:41:00Z')")
@@ -89,8 +107,10 @@ con.execute("INSERT INTO events (id, source, kind, ref, payload, status) VALUES 
 text = f.status(con, {**pol, "spawn": {"max_active": 10}}, names={SID: "web-690-hand"})
 for want in ("Sessions: 3 not ended", "web-690-hand", "ticket WEB-690", "PR 577", "Slots: 0 of 10 in use",
              "Waiting admitted tickets: 1", "WEB-690    needs-decision", "Unrouted Events: inbox 1",
-             "github           2026-10-28T16:40:45Z", "Planner: pl live", "Relay: none"):
+             "github           2026-10-28T16:40:45Z", "Planner: pl live", "Relay: none",
+             "Needs you: 1\n  web-690-hand approve the plan since 20"):
     assert want in text, (want, text)
+assert "stale" not in text  # an ended Session
 
 # --- jira_done: the status name decides, not the category. "Ready for Deploy" is in category done. ---
 import jira_source

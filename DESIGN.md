@@ -31,7 +31,7 @@ Invariants:
 1. Every update enters the system as an Event. No component acts on a source system directly.
 2. A Session binds to a Ref only through a Link. No component parses a branch name, a session name, or a PR title to route.
 3. Identity comes before execution. The spawner picks the UUID before it starts the agent.
-4. Only Actions talk to herdr, and only through `herdr.py`. Sources, Recorders, and the Router never call herdr. The one exception is the attention hook: it sets display metadata only.
+4. Only Actions talk to herdr, and only through `herdr.py`. Sources, Recorders, and the Router never call herdr. The one exception is the attention hook: it clears display metadata only.
 5. The Router is pure. It reads the registry and returns a decision. It writes nothing.
 6. No Event is dropped in silence. Every Event ends as `delivered`, `held`, `unrouted`, or `dropped` with a reason.
 
@@ -66,6 +66,8 @@ The `plan` table has one row for each planned ticket: `position` (1 starts first
 - `plan.py order KEY [KEY ...]`: set positions 1 to n in this order. Rows for other keys stay.
 - `plan.py hold KEY --note TEXT` and `plan.py release KEY`.
 - `plan.py claim-role`: make the calling Session the `planner`.
+
+The `needs` table has one row for each Session that waits for the operator: the need as `text`, and the time `at`. `factory.py needs` writes it. The attention hook deletes it.
 
 SQLite cannot change a CHECK constraint. `registry.connect()` rebuilds the `sessions` table one time when its role check lacks a role of the check in `schema.sql`, for example `planner` or `reviewer`. It creates the new table, copies the rows, drops the old table, and renames the new one. A rename of the old table first would move the foreign keys of `links` and `events` to the old name.
 
@@ -136,7 +138,7 @@ Handle it per the techichi-worker skill.
 
 The behavior for each kind lives in one user skill, the worker skill (`[skills] worker`). A prompt to the planner names the planner skill (`[skills] planner`) instead. A prompt to a reviewer names the reviewer skill (`[skills] reviewer`), and its first line names the PR: `[factory] 1 item for PR 5.` The registry carries no behavior.
 
-When a worker, a reviewer, or the planner needs the operator, the skill tells it to write the need in plain text and to end the reply with a line that starts with `Needs you:`. The attention hook (see Recorders) then flags the pane in herdr. The flag is display only. The pane stays `idle` or `done`, so Rule 5 still delivers Events to it. A question tool or a permission prompt still makes the pane `blocked`, and Rule 5 holds its Events.
+When a worker, a reviewer, or the planner needs the operator, the skill tells it to run `factory.py needs TEXT` and to write the need in plain text. The command flags the pane in herdr (see Commands). The flag is display only. The pane stays `idle` or `done`, so Rule 5 still delivers Events to it. A question tool or a permission prompt still makes the pane `blocked`, and Rule 5 holds its Events.
 
 ## Spawn
 
@@ -188,7 +190,7 @@ The `slack` Link holds the thread root: `thread_ts` for a reply, else the `ts` o
 
 The daemon reads `branch` with `git -C <cwd> branch --show-current` on each status change. No Recorder parses git commands.
 
-`hooks/attention.py` is not a Recorder. It writes no Link. `install.py hooks` adds it for `Stop` and `UserPromptSubmit`, with the same session checks as a Recorder. On `Stop`, if a line of `last_assistant_message` starts with `Needs you:`, it reports pane metadata with the source `<[factory] metadata_source>.attention`: the display name `⚑ <agent name>` (else `⚑ <ticket token>`), and the `idle` and `done` labels `needs you: <the rest of the line>`. Any other `Stop`, and every `UserPromptSubmit`, clears that metadata. herdr clients and Ovis show the display name. Waits, notifications, and the herdr status do not change. Only Claude Code gives a hook the last reply, so a Pi Session gets no flag.
+`hooks/attention.py` is not a Recorder. It writes no Link. `install.py hooks` adds it for `UserPromptSubmit`, with the same session checks as a Recorder. When the operator writes in a pane, it deletes the `needs` rows of this Session and of every Session in this pane, because a `/clear` gives the pane a new session id. If it deleted a row, it clears the flag of `factory.py needs`. A prompt that starts with `[factory]` is an item, not the operator's answer, so the flag stays. Any other hook event does nothing. An old `Stop` entry for `attention.py` in `settings.json` is harmless, and `install.py` never removes an entry. An operator prompt clears the flag only through this hook. So on a harness with no hooks, such as Pi, only `factory.py needs --clear` clears it.
 
 ## Daemon
 
@@ -208,7 +210,7 @@ It subscribes to:
 
 After a burst of events, the daemon reads `session.snapshot` one time. It matches each agent of a harness kind to a Session by its session id and sets it `live`. It marks missing `live` Sessions `gone`. It inserts unknown agents as unclaimed `worker` Sessions. On each status change it reads `branch` from git. Then it runs one Router pass over all `queued`, `held`, and `unrouted` Events.
 
-When herdr is quiet, the daemon runs the same pass every 30 seconds. Thus Events from other Sources go out without a herdr event. On connect and on `events_lost`, it also re-applies the pane tokens.
+When herdr is quiet, the daemon runs the same pass every 30 seconds. Thus Events from other Sources go out without a herdr event. On connect and on `events_lost`, it also re-applies the pane tokens and the flag of each `live` Session with a `needs` row. herdr forgets pane metadata on a restart.
 
 Before each Router pass, the daemon polls each Source in `[factory] sources`, each in its own `try`. A Source failure writes one log line. It never causes a herdr reconnect.
 
@@ -334,10 +336,11 @@ A test session proved it. Arbitrary Bash, chained commands, redirects, a heredoc
 
 ## Commands
 
-`factory.py` holds the operator's three commands. They are plain commands. A herdr plugin can wrap them later.
+`factory.py` holds the operator's three commands and the `needs` command of a Session. They are plain commands. A herdr plugin can wrap them later.
 
 - `factory.py claim REF [--session PANE|NAME|UUID]`: link a Session to a Ref with `created_by = claim`. REF is a ticket key of a policy project, a PR URL of a policy repo, or a Slack permalink, stored as `<channel>:<thread_ts or ts>`. Anything else is rejected. The default Session is the caller's pane. A missing Session row is inserted from the herdr agent record. The next Router pass delivers the `unrouted` Events of that Ref, and an admitted ticket with a Link does not spawn. There is no `unclaim`.
-- `factory.py status`: read only. The Sessions that are not `ended`, with role, agent name or pane, state, agent status, ticket, PRs (a reviewer shows its review PR), and held count. The slots in use against `max_active`. The waiting admitted tickets with their reasons. The unrouted Events by kind. The last write of each Source cursor. The planner and the relay.
+- `factory.py needs TEXT [--session PANE|NAME|UUID]` and `factory.py needs --clear [--session ...]`: a Session runs it when it waits for the operator. It finds the Session as `claim` does. It writes the `needs` row with TEXT and the time, and replaces an older row. It reports pane metadata with the source `<[factory] metadata_source>.attention`: the display name `⚑ <agent name>` (else `⚑ <ticket token>`), and the `idle` and `done` labels `needs you: TEXT`. herdr clients and Ovis show the display name. Waits, notifications, and the herdr status do not change. `--clear` deletes the row and clears the metadata. An empty TEXT is an error.
+- `factory.py status`: read only. The Sessions that are not `ended`, with role, agent name or pane, state, agent status, ticket, PRs (a reviewer shows its review PR), and held count. The Sessions of that list that wait for the operator, oldest first, with the need and its time. The slots in use against `max_active`. The waiting admitted tickets with their reasons. The unrouted Events by kind. The last write of each Source cursor. The planner and the relay.
 - `factory.py cleanup KEY`: run the cleanup Action for each worker Session on that ticket, a hand-started one too. It skips the ticket, PR, and idle checks, and it keeps the clean-worktree check. There is no `--force`. It also works for a `gone` or `ended` Session whose workspace is closed and whose checkout is left. It does not end a reviewer: close the reviewer's workspace, or wait for the daemon.
 
 ## Cleanup
@@ -416,7 +419,7 @@ Timers live in the `cursors` table. `registry.due(name)` and `registry.wait(name
   jira_source.py   the Jira Source
   slack_source.py  the Slack Source, run by the relay session
   plan.py          the planner tool, the only writer of the plan table
-  factory.py       claim, status, cleanup
+  factory.py       claim, needs, status, cleanup
   launchd/         the LaunchAgent template (macOS)
   systemd/         the systemd user unit template (Linux)
   examples/        command Sources, for example github_issues.py

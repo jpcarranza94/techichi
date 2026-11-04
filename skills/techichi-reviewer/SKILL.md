@@ -36,4 +36,4 @@ The spawner checked out the head of the pull request in this directory, on the b
 
 The operator can be away from the screen. A flag in herdr shows the operator which session waits for them.
 
-Each time you need the operator, write the need in your reply, in plain text, with the links. End the reply with one line that starts with `Needs you:` and names the need in a few words, for example `Needs you: choose what to post on PR 7`. Then stop. The factory puts a flag on the pane in herdr. The next prompt clears it. If you still wait after a factory item, write the line again.
+Each time you need the operator, run `python3 {factory}/factory.py needs "<the need in a few words>"`, for example `python3 {factory}/factory.py needs "choose what to post on PR 7"`. Then write the need in your reply, in plain text, with the links. Then stop. The flag stays until the operator writes in this pane. A factory item does not clear it.

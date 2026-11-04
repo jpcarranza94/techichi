@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""Stop and UserPromptSubmit hook: mark the herdr pane while its agent waits for the operator.
-A reply waits for the operator when one of its lines starts with "Needs you:". The next prompt clears the mark.
+"""UserPromptSubmit hook: the operator wrote in this pane, so clear the flag that `factory.py needs` set.
+A "[factory]" item prompt is not the operator's answer: the flag stays. Any other hook event does nothing.
 Display only: herdr keeps the semantic state. Not a Recorder: it writes no Link."""
 import os
-import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 import herdr
 import registry
 
-NEED = re.compile(r"^\W*needs you\b\W*(.*)$", re.I | re.M)
+
+def clear(con, data):
+    if data.get("hook_event_name") != "UserPromptSubmit" or (data.get("prompt") or "").lstrip().startswith("[factory]"):
+        return
+    pane = os.environ["HERDR_PANE_ID"]
+    # Every Session of this pane: a /clear gives the pane a new session id.
+    gone = con.execute("DELETE FROM needs WHERE session_id = ? OR session_id IN "
+                       "(SELECT session_id FROM sessions WHERE pane_id = ?)", (data["session_id"], pane)).rowcount
+    if gone:
+        herdr.report_attention(pane, None)
 
 
-def mark(con, data):
-    m = data.get("hook_event_name") == "Stop" and NEED.search(data.get("last_assistant_message") or "")
-    herdr.report_attention(os.environ["HERDR_PANE_ID"], m.group(1).strip(" *_") if m else None)
-
-
-registry.hook(mark)
+registry.hook(clear)

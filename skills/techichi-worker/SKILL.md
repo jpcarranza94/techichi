@@ -17,7 +17,7 @@ The factory routes ticket, pull request, and Slack updates to the session that o
 - Code changes on the branch of this session are allowed. Commit them.
 - Push a commit that fixes a review item, a failed check, or a merge conflict to the branch of this session. Reviewers see only pushed commits. Do not push anything else outside the start skill.
 - Before you post a ticket comment or a Slack message, show the draft to the operator and wait for approval.
-- Each time you wait for the operator, end your reply with a `Needs you:` line. See "Wait for the operator".
+- Each time you wait for the operator, run `factory.py needs`. See "Wait for the operator".
 - Do not edit `registry.db` by hand. The Recorder hooks or the daemon write the Links. The one exception is the escalation below.
 - Never run `factory.py cleanup`. The daemon ends a spawned worker when its work is done, and the operator runs `cleanup` by hand.
 
@@ -82,16 +82,12 @@ Stop and ask the operator when one of these occurs:
 
 The operator can be away from the screen. A flag in herdr shows the operator which session waits for them.
 
-Each time you need the operator, write the need in your reply, in plain text: what you need, why, and the links. End the reply with one line that starts with `Needs you:` and names the need in a few words. Then stop.
-
-```
-Needs you: approve the plan
-```
+Each time you need the operator, run `python3 {factory}/factory.py needs "<the need in a few words>"`. For example: `python3 {factory}/factory.py needs "approve the plan"`. Then write the need in your reply, in plain text: what you need, why, and the links. Then stop.
 
 - This applies to every kind of need: approve a plan or a draft, make a decision, give information, or do an action that only the operator can do, such as a login, a merge, or a deploy.
-- The factory puts a flag on the pane in herdr. The next prompt clears it.
-- If a factory item comes while you wait, handle it. If you still wait for the operator after it, end that reply with the `Needs you:` line again.
-- If you need nothing from the operator, do not write the line.
+- The flag stays until the operator writes in this pane. A factory item does not clear it. If a factory item comes while you wait, handle it.
+- If the need goes away before the operator answers, run `python3 {factory}/factory.py needs --clear`.
+- Do not use a question tool to wait for the operator.
 
 ## Escalate to coordinator
 

@@ -286,13 +286,18 @@ def sync(con, snap, pol=None):
 
 
 def apply_tokens(con):
-    """Pane tokens do not survive a herdr restart. Re-apply ticket=KEY on each live pane."""
+    """Pane metadata does not survive a herdr restart. Re-apply ticket=KEY and the operator flag on each live pane."""
     for r in con.execute("SELECT s.pane_id, min(l.ref) AS ref FROM sessions s JOIN links l USING (session_id) "
                          "WHERE s.state = 'live' AND l.kind = 'ticket' GROUP BY s.session_id"):
         try:
             herdr.report_ticket(r["pane_id"], r["ref"])
         except Exception as e:
             log("token failed", r["pane_id"], e)
+    for r in con.execute("SELECT s.pane_id, n.text FROM sessions s JOIN needs n USING (session_id) WHERE s.state = 'live'"):
+        try:
+            herdr.report_attention(r["pane_id"], r["text"])
+        except Exception as e:
+            log("flag failed", r["pane_id"], e)
 
 
 def resync(con, pol, tokens=False):
