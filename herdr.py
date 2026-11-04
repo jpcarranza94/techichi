@@ -95,8 +95,9 @@ def report_attention(pane, need):
         run("pane", "report-metadata", pane, "--source", src, "--clear-display-agent", "--clear-state-labels")
         return
     a = agent(pane)
+    name = a.get("name") or (a.get("tokens") or {}).get("ticket") or a["agent"]  # an older pane can have no name
     label = f"needs you: {need}" if need else "needs you"
-    run("pane", "report-metadata", pane, "--source", src, "--display-agent", f"\u2691 {a.get('name') or a['agent']}",
+    run("pane", "report-metadata", pane, "--source", src, "--display-agent", f"\u2691 {name}",
         "--state-label", f"idle={label}", "--state-label", f"done={label}")
 
 

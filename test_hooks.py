@@ -69,7 +69,7 @@ herdr_log = Path(d) / "herdr.log"
 fake = Path(d) / "herdr"
 fake.write_text("#!/bin/sh\n"
                 f"echo \"$*\" >> {herdr_log}\n"
-                'echo \'{"result": {"agent": {"name": "app-1", "agent": "claude"}}}\'\n')
+                'echo \'{"result": {"agent": {"name": null, "agent": "claude", "tokens": {"ticket": "APP-1"}}}}\'\n')
 fake.chmod(0o755)
 os.environ["TECHICHI_HERDR"] = str(fake)
 fire("attention.py", {"session_id": "s3", "hook_event_name": "Stop",
@@ -79,7 +79,7 @@ fire("attention.py", {"session_id": "s3", "hook_event_name": "Stop", "last_assis
 src = "--session default pane report-metadata wX:p1 --source techichi.attention"
 assert herdr_log.read_text().splitlines() == [
     "--session default agent get wX:p1",
-    f"{src} --display-agent \u2691 app-1 --state-label idle=needs you: approve the plan. "
+    f"{src} --display-agent \u2691 APP-1 --state-label idle=needs you: approve the plan. "
     "--state-label done=needs you: approve the plan.",
     f"{src} --clear-display-agent --clear-state-labels",
     f"{src} --clear-display-agent --clear-state-labels"], herdr_log.read_text()

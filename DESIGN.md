@@ -188,7 +188,7 @@ The `slack` Link holds the thread root: `thread_ts` for a reply, else the `ts` o
 
 The daemon reads `branch` with `git -C <cwd> branch --show-current` on each status change. No Recorder parses git commands.
 
-`hooks/attention.py` is not a Recorder. It writes no Link. `install.py hooks` adds it for `Stop` and `UserPromptSubmit`, with the same session checks as a Recorder. On `Stop`, if a line of `last_assistant_message` starts with `Needs you:`, it reports pane metadata with the source `<[factory] metadata_source>.attention`: the display name `⚑ <agent name>`, and the `idle` and `done` labels `needs you: <the rest of the line>`. Any other `Stop`, and every `UserPromptSubmit`, clears that metadata. herdr clients and Ovis show the display name. Waits, notifications, and the herdr status do not change. Only Claude Code gives a hook the last reply, so a Pi Session gets no flag.
+`hooks/attention.py` is not a Recorder. It writes no Link. `install.py hooks` adds it for `Stop` and `UserPromptSubmit`, with the same session checks as a Recorder. On `Stop`, if a line of `last_assistant_message` starts with `Needs you:`, it reports pane metadata with the source `<[factory] metadata_source>.attention`: the display name `⚑ <agent name>` (else `⚑ <ticket token>`), and the `idle` and `done` labels `needs you: <the rest of the line>`. Any other `Stop`, and every `UserPromptSubmit`, clears that metadata. herdr clients and Ovis show the display name. Waits, notifications, and the herdr status do not change. Only Claude Code gives a hook the last reply, so a Pi Session gets no flag.
 
 ## Daemon
 
