@@ -19,11 +19,13 @@ reviewer = "techichi-reviewer"                  # reviews a PR that someone aske
 # extra = "skills-extra"                        # a folder in the config dir with worker.md, planner.md, reviewer.md to append
 
 # One table per project. The key is the ticket key prefix, for example the Jira project key.
-# Required: repo and start. Optional: github, admit, setup, harness.
+# Required: repo and start. Optional: github, admit, setup, teardown, harness.
 [projects.APP]
 repo   = "~/code/app"                           # the main checkout
 github = "acme/app"                             # owner/name on GitHub. Remove it for another git host.
 setup  = []                                     # shell commands to run in a new worktree, for example "npm ci"
+teardown = []                                   # shell commands that the cleanup runs in the checkout before it removes it
+# teardown = ["docker ps -aq --filter name=^${TECHICHI_PREFIX}- | xargs -r docker rm -fv"]  # this Session's containers
 # harness = "pi"                                # this project's coding agent, if not [factory] harness
 admit  = "project = APP AND sprint in openSprints() AND assignee = currentUser() AND status = 'To Do'"  # Jira only
 start  = { skill = "ship-ticket", checkpoint = true }  # the start skill. See README section "Start skill".

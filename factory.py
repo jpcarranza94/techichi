@@ -22,6 +22,7 @@ import registry
 NOW = registry.NOW
 IDLE_FOR = timedelta(minutes=60)
 EVERY = timedelta(minutes=10)
+TEARDOWN_TIMEOUT = 120  # seconds for each teardown command
 
 
 def log(*a):
@@ -230,7 +231,8 @@ def scratch_worktrees(repo, cwd, sid, name):
 
 
 def cleanup_action(con, pol, s):
-    """Remove the checkouts, the workspace and the branch, then end the Session. Stop at the first failure."""
+    """Remove the checkouts, run the teardown, remove the workspace and the branch, then end the Session. Stop at the
+    first failure. A failed teardown command does not stop."""
     ticket = (con.execute("SELECT ref FROM links WHERE kind IN ('ticket','review') AND session_id = ?",  # a reviewer: the PR
                           (s["session_id"],)).fetchone() or ["-"])[0]
     project = s["project"] or registry.project_for_cwd(s["cwd"] or ".", pol)
@@ -270,7 +272,9 @@ def cleanup_action(con, pol, s):
         r = git("worktree", "remove", wt, cwd=repo)
         if r.returncode:
             return stop(f"git worktree remove {wt}: {r.stderr.strip()[:200]}")
-    try:  # 2. never --force
+    if checkout_left(s):  # 2.
+        teardown(pol["projects"][project]["teardown"], s["cwd"])
+    try:  # 3. never --force
         if s["workspace_id"] and s["workspace_id"] in open_workspaces():
             herdr.worktree_remove(s["workspace_id"])
             if s["workspace_id"] in open_workspaces():
@@ -281,15 +285,29 @@ def cleanup_action(con, pol, s):
                 return stop(f"git worktree remove {s['cwd']}: {r.stderr.strip()[:200]}")
     except Exception as e:
         return stop(f"herdr: {e}")
-    if s["branch"]:  # 3. never -D, never a remote branch
+    if s["branch"]:  # 4. never -D, never a remote branch
         r = git("branch", "-d", s["branch"], cwd=repo)
         if r.returncode and "not found" not in r.stderr:
             return stop(f"git branch -d {s['branch']}: {r.stderr.strip()[:200]}")
-    con.execute(f"UPDATE sessions SET state = 'ended', ended_at = {NOW} WHERE session_id = ?", (s["session_id"],))  # 4.
+    con.execute(f"UPDATE sessions SET state = 'ended', ended_at = {NOW} WHERE session_id = ?", (s["session_id"],))  # 5.
     registry.drop_cursor(con, f"cleanup:{s['session_id']}")
     registry.drop_cursor(con, f"closed:{s['session_id']}")
     log(f"cleanup of {ticket}: Session {s['session_id'][:8]} ended, checkout, workspace and branch removed")
     return True
+
+
+def teardown(cmds, cwd):
+    """Run the project's teardown commands in the checkout. A failure writes one log line and never stops the cleanup:
+    a leftover container must not keep a finished worktree alive."""
+    name = os.path.basename(os.path.normpath(cwd))
+    env = {**os.environ, "TECHICHI_CHECKOUT": name, "TECHICHI_PREFIX": re.sub(r"[^a-z0-9]", "", name.lower())}
+    for cmd in cmds:
+        try:
+            r = subprocess.run(cmd, shell=True, cwd=cwd, env=env, capture_output=True, text=True, timeout=TEARDOWN_TIMEOUT)
+            if r.returncode:
+                log(f"teardown failed ({r.returncode}) in {name}: {cmd}: {r.stderr.strip()[-200:]}")
+        except (OSError, subprocess.TimeoutExpired) as e:
+            log(f"teardown failed in {name}: {cmd}: {e}")
 
 
 def inside(path, root):

@@ -284,6 +284,19 @@ f.cleanup_closed(con, pol, {W})
 assert [x for x in steps if x[0] == "git"] == [] and any("also used by hand-shell" in line for line in logs)
 AGENTS.pop()
 con.execute("UPDATE sessions SET state = 'live' WHERE session_id = ?", (W,))
+# Teardown: each command runs in the checkout with the checkout name and its prefix. A failure logs and goes on.
+wt = Path(os.path.realpath(tempfile.mkdtemp()), "APP-12")
+wt.mkdir()
+down = {**pol, "projects": {**pol["projects"], "APP": {**pol["projects"]["APP"], "teardown": [
+    'echo "$TECHICHI_CHECKOUT $TECHICHI_PREFIX $(pwd)" > ../out', "echo boom >&2; exit 3", "echo next >> ../out"]}}}
+con.execute("UPDATE sessions SET state = 'ended', cwd = ? WHERE session_id = ?", (str(wt), W))
+registry.drop_cursor(con, f"closed:{W}")
+logs.clear()
+f.cleanup_closed(con, down, {W})
+assert (wt.parent / "out").read_text() == f"APP-12 app12 {wt}\nnext\n"
+assert [line for line in logs if "teardown" in line] == ["teardown failed (3) in APP-12: echo boom >&2; exit 3: boom"]
+assert s()["state"] == "ended" and ("git", "worktree", "remove", str(wt)) in steps
+con.execute("UPDATE sessions SET state = 'live', cwd = '/wt/APP-1325' WHERE session_id = ?", (W,))
 
 # --- auto_cleanup: only spawned workers, at most every 10 minutes, and the 24-hour rule ---
 for sid, role, by in (("hand", "worker", "claim"), ("plan", "planner", None), ("rel", "relay", None)):

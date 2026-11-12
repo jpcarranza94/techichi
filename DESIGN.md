@@ -413,15 +413,16 @@ Three guards come first. Each one stops the Action with one log line:
 The cleanup Action stops at the first failure and writes one log line:
 
 1. Remove the clean git worktrees in the scratch folder of the Session's harness. For `claude` that is `<real /tmp>/claude-<uid>/<cwd slug>/<session_id>/`.
-2. If the workspace is open, run `herdr worktree remove --workspace <id>`, never with `--force`. It also closes the workspace. If the workspace stays, the Action closes it. If the workspace is closed, run `git worktree remove <cwd>` in the main checkout, never with `--force`.
-3. Run `git branch -d <branch>` in the main checkout. Never `-D`, and never a remote branch.
-4. Set the Session `ended`, with one log line that names the ticket.
+2. If the checkout still exists, run the project's `teardown` commands in it, one at a time, with `sh -c`. They remove the resources of the Session that git does not track, for example the Docker containers that the worker started. Each command gets two environment variables: `TECHICHI_CHECKOUT` is the name of the checkout folder (`APP-12`, `review-app-7`), and `TECHICHI_PREFIX` is that name in lowercase with every character that is not a letter or a digit removed (`app12`, `reviewapp7`). Each command has 120 seconds. A command that fails or times out writes one log line, and the Action goes on: a leftover container must not keep a finished worktree alive.
+3. If the workspace is open, run `herdr worktree remove --workspace <id>`, never with `--force`. It also closes the workspace. If the workspace stays, the Action closes it. If the workspace is closed, run `git worktree remove <cwd>` in the main checkout, never with `--force`.
+4. Run `git branch -d <branch>` in the main checkout. Never `-D`, and never a remote branch.
+5. Set the Session `ended`, with one log line that names the ticket.
 
 The same check sets a Session that has been `gone` for more than 24 hours to `ended`.
 
 ### A workspace closed by hand
 
-When the operator closes the workspace of a spawned worker or reviewer, the agent stops. Claude Code runs its `SessionEnd` hook, so the Session is `ended`. An agent with no hook is `gone`. Either way the checkout and the branch stay. The daemon then runs the cleanup Action for it at once, with no Jira, PR, or idle check. The guards and the clean-worktree check stay, so a dirty checkout or a local-only commit stops the Action with one log line, and nothing is lost.
+When the operator closes the workspace of a spawned worker or reviewer, the agent stops. Claude Code runs its `SessionEnd` hook, so the Session is `ended`. An agent with no hook is `gone`. Either way the checkout and the branch stay. The daemon then runs the cleanup Action for it at once, with no Jira, PR, or idle check. The Action runs the `teardown` commands too, because the checkout still exists. The guards and the clean-worktree check stay, so a dirty checkout or a local-only commit stops the Action with one log line, and nothing is lost.
 
 A herdr restart can hide every agent until a client attaches. So the Action runs only when both are true:
 
@@ -445,6 +446,8 @@ Timers live in the `cursors` table. `registry.due(name)` and `registry.wait(name
 - `worktrees`, `helper_cwd`, `relay_cwd`: the folders for ticket worktrees, the planner, and the Slack poll. `relay_cwd` stays empty.
 - `metadata_source`: the source of the pane tokens. Default `techichi`.
 - `inbox_ref`: the `inbox` Ref of the planner. Default `operator`.
+
+Each `[projects.<KEY>]` table can list `setup` and `teardown` shell commands. Both default to `[]`. The spawner runs `setup` in a new worktree. The cleanup Action runs `teardown` in the checkout before it removes it. See "Cleanup".
 
 `[skills]` holds the skill names for `worker`, `planner`, and `reviewer`, and an optional `extra` folder. `install.py skills` renders each core template in `skills/` into `<config>/skills/<name>/SKILL.md`. It fills in `{factory}` (the core path) and `{home}` (the config path), sets the name, and appends `<extra>/<role>.md`. For a harness with `skills = link` (Claude Code), it links every skill into `~/.claude/skills`. Pi gets the folder with `--skill`.
 

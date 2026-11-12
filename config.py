@@ -73,6 +73,7 @@ def complete(raw, where="policy"):
         need(p["start"], ("skill",), f"projects.{key}.start")
         p["repo"] = os.path.expanduser(p["repo"])
         p.setdefault("setup", [])
+        p.setdefault("teardown", [])
     for name in [f["harness"]] + [p["harness"] for p in pol["projects"].values() if "harness" in p]:
         if name not in harness.HARNESSES:
             raise PolicyError(f"{where}: no harness {name!r}. Known: {', '.join(sorted(harness.HARNESSES))}")
