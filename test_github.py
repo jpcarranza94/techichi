@@ -213,11 +213,13 @@ PRS = {A + "1": {"state": "OPEN", "headRefOid": "abc123", "baseRefName": "dev", 
        A + "2": {"state": "OPEN", "headRefOid": "def456", "baseRefName": "dev", "mergeable": "UNKNOWN",
                  "statusCheckRollup": [run("test", "SUCCESS"), status("SUCCESS")]},
        A + "3": {"state": "CLOSED", "headRefOid": "0f0f0f", "baseRefName": "dev", "mergeable": "CONFLICTING",
-                 "statusCheckRollup": [run("test", "FAILURE")]}}
+                 "statusCheckRollup": [run("test", "FAILURE")]},
+       A + "6": {"state": "OPEN", "headRefOid": "aaa111", "baseRefName": "dev", "mergeable": "CONFLICTING",
+                 "statusCheckRollup": [run("test", "FAILURE")], "author": {"login": "bob"}}}
 reads = []
 view = lambda url: reads.append(url) or PRS[url]
 assert g.poll(c, pol, list_fn=lambda p: 1 / 0, view=view) == 3
-assert sorted(reads) == [A + "1", A + "2", A + "3"]  # not another repo, an ended Session, or a review Link
+assert sorted(reads) == [A + "1", A + "2", A + "3", A + "6"]  # not another repo or an ended Session
 ev = {r["id"]: (r["kind"], r["ref"], json.loads(r["payload"])) for r in c.execute("SELECT * FROM events")}
 assert sorted(ev) == ["gh:check:abc123:ci/deploy", "gh:check:abc123:test", f"gh:conflict:{A}1:abc123"], sorted(ev)
 assert ev["gh:check:abc123:test"] == ("pr", A + "1", {
@@ -230,7 +232,17 @@ assert (conflict["what"], conflict["actor"], conflict["url"]) == ("merge conflic
 reads.clear()
 assert g.poll(c, pol, list_fn=lambda p: 1 / 0, view=view) == 0 and reads == []
 c.execute("DELETE FROM cursors WHERE source = 'github:checks:next'")
-assert g.poll(c, pol, list_fn=lambda p: 1 / 0, view=view) == 0 and len(reads) == 3
+assert g.poll(c, pol, list_fn=lambda p: 1 / 0, view=view) == 0 and len(reads) == 4
+# A review Link: no check or conflict Event. The first read records the head. A new head is one push Event.
+assert g.cursor(c, f"github:head:{A}6") == "aaa111"
+PRS[A + "6"] = dict(PRS[A + "6"], headRefOid="bbb222")
+c.execute("DELETE FROM cursors WHERE source = 'github:checks:next'")
+assert g.poll(c, pol, list_fn=lambda p: 1 / 0, view=view) == 1
+push = c.execute("SELECT kind, ref, payload FROM events WHERE id = 'gh:commit:bbb222'").fetchone()
+assert (push["kind"], push["ref"]) == ("pr", A + "6") and g.cursor(c, f"github:head:{A}6") == "bbb222"
+assert {k: json.loads(push["payload"])[k] for k in ("what", "actor", "url", "self")} == {
+    "what": "push", "actor": "bob", "url": A + "6/commits/bbb222", "self": False}
+c.execute("DELETE FROM events WHERE id = 'gh:commit:bbb222'")
 # The dry run prints the Events and writes nothing, not even the timer.
 c.execute("DELETE FROM cursors WHERE source = 'github:checks:next'")
 with contextlib.redirect_stdout(io.StringIO()) as out:
@@ -243,5 +255,5 @@ c.execute("DELETE FROM cursors WHERE source = 'github:checks:next'")
 listed, reads = [], []
 with contextlib.redirect_stderr(io.StringIO()) as err:
     g.poll(c, pol, list_fn=lambda p: listed.append(p) or ({}, []), view=lambda u: 1 / 0 if u == A + "1" else view(u))
-assert listed and sorted(reads) == [A + "2", A + "3"] and f"github checks: {A}1" in err.getvalue()
+assert listed and sorted(reads) == [A + "2", A + "3", A + "6"] and f"github checks: {A}1" in err.getvalue()
 print("ok")

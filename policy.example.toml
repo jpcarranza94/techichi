@@ -48,7 +48,7 @@ start  = { skill = "ship-ticket", checkpoint = true }
 
 [route]
 ticket = ["coordinator", "worker"]
-pr     = ["worker", "coordinator"]
+pr     = ["worker", "coordinator", "reviewer"]
 slack  = ["worker", "coordinator"]
 inbox  = ["planner"]
 review = ["reviewer"]

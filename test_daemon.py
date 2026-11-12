@@ -411,6 +411,12 @@ assert status("rv2")[:2] == ("delivered", "rv") and [p for p, _ in notes] == ["p
 text = notes[0][1]
 assert text.startswith("[factory] 1 item for PR 5.\n- test review 5: review requested by bob,"), text
 assert text.endswith("Handle it per the techichi-reviewer skill.")
+# A pr Event on the PR goes to the reviewer too: the author's push. A review bot on that PR is dropped.
+event("rp1", "pr", PR, what="push", actor="alice")
+event("rp2", "pr", PR, what="review commented", actor="coderabbitai[bot]")
+assert daemon.route(con, ev("rp1"), pol) == ("delivered", "rv", None)
+assert daemon.route(con, ev("rp2"), pol) == ("dropped", None, "bot")
+con.execute("UPDATE events SET status = 'dropped' WHERE id IN ('rp1', 'rp2')")
 # A failed review spawn stays unrouted. It does not go to the planner.
 event("rv3", "review", "https://github.com/acme/app/pull/6", what="review requested", admitted=True, project="APP")
 pol["spawn"]["max_active"] += 1

@@ -29,6 +29,7 @@ The spawner checked out the head of the pull request in this directory, on the b
 
 ## Later items
 
+- An item with "push" means that the author pushed new commits, for example fixes for your findings. Run `git pull --ff-only origin <head branch>`. Check each finding against the new commits: fixed, not fixed, or partly fixed. Update the overview. Ask the operator again.
 - An item with "review requested" is a new request on the same pull request. Run `git pull --ff-only origin <head branch>`. `gh pr view <URL> --json headRefName` gives the head branch. Review the commits since your last review. Update the overview. Ask the operator again.
 - Read any other "[factory]" item at its link. Then wait for the operator.
 

@@ -91,7 +91,7 @@ The `payload` of an Event is JSON with these keys. Each Source fills them.
 The rules apply in order. The first match wins.
 
 1. The actor is the operator. Drop with reason `own-action`.
-2. Find candidates: Sessions with a Link to `(kind, ref)` in a state other than `ended`. Order by `[route]` for the kind, then by newest.
+2. Find candidates: Sessions with a Link to `(kind, ref)` in a state other than `ended`. A `pr` Event also matches a `review` Link, so a reviewer gets the pushes and replies on its PR. Order by `[route]` for the kind, then by newest. If the first candidate is a reviewer and the actor ends with `[bot]`, drop with reason `bot`.
 3. No candidate, kind is `ticket` or `review`, the Event is `admitted`, and the Event is `queued`. Apply the admission rules below.
 4. No candidate otherwise. Mark `unrouted`.
 5. The first candidate is `blocked`, `working`, `gone`, or `registered`. Mark `held`. A `working` session handles its own round, review bots included. Its items go out in one batch when it is `idle` or `done`, not as one extra turn for each item. The planner notice keeps its own rules.
@@ -275,8 +275,9 @@ Admission is a property of an Event: `kind = ticket` and `admitted = true`. The 
 
 The Source also reads failed checks and merge conflicts. `poll()` runs `checks()` on its own timer cursor `github:checks:next`, every 3 minutes. It runs when the notifications are not due. It does not run on the first run. A failure in it writes one log line and does not stop the notifications.
 
-- It reads each distinct `pr` Link of a Session that is not `ended`, in a repo that `policy.toml` lists as `github`. It does not read a `review` Link, because a reviewer does not fix the PR of another person.
-- One read for each PR: `gh pr view <URL> --json state,headRefOid,baseRefName,mergeable,statusCheckRollup`. It skips a PR whose `state` is not `OPEN`.
+- It reads each distinct `pr` and `review` Link of a Session that is not `ended`, in a repo that `policy.toml` lists as `github`.
+- A `review` Link gets no check or conflict Event, because a reviewer does not fix the PR of another person. It gets a new head commit, because GitHub sends no notification for a push. The cursor `github:head:<PR URL>` keeps the last head. The first read only sets it. A different head is `gh:commit:<sha>`, the id of the notification push, what `push`, actor the PR author, url the commit.
+- One read for each PR: `gh pr view <URL> --json state,headRefOid,baseRefName,mergeable,statusCheckRollup,author`. It skips a PR whose `state` is not `OPEN`.
 - A check failed on the head commit: a `CheckRun` with conclusion `FAILURE`, `TIMED_OUT`, or `STARTUP_FAILURE`, or a `StatusContext` with state `FAILURE` or `ERROR`. A `CANCELLED` run makes no Event, because a newer push cancels the runs of the old head. Each one is `gh:check:<head sha>:<name or context>`, kind `pr`, what `check failed: <name>`, actor `ci`, at `completedAt` or now, url the check link or the PR.
 - `mergeable` is `CONFLICTING`: `gh:conflict:<PR URL>:<head sha>`, what `merge conflict with <base>`, actor `github`, url the PR. `UNKNOWN` means that GitHub still computes it, so it makes no Event. The next run sees it.
 - `self` is false. The ids deduplicate the runs on the same head. A new push gives new ids.

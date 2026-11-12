@@ -109,7 +109,7 @@ def head_branch(note, get=None):
 def pr_view(url):
     """One read of a PR: its state, head commit, base branch, mergeability, and checks."""
     out = subprocess.run([config.GH, "pr", "view", url, "--json",
-                          "state,headRefOid,baseRefName,mergeable,statusCheckRollup"],
+                          "state,headRefOid,baseRefName,mergeable,statusCheckRollup,author"],
                          capture_output=True, text=True, timeout=30, check=True).stdout
     return json.loads(out)
 
@@ -127,7 +127,8 @@ def insert(con, evs, dry_run):
 
 def checks(con, pol, dry_run=False, view=pr_view):
     """Failed checks and a merge conflict on the head commit of each open PR with a pr Link of a Session that is not
-    ended. A pr Link already routes these Events, so they carry no head branch."""
+    ended. A pr Link already routes these Events, so they carry no head branch.
+    For a review Link, only a new head commit: GitHub sends no notification for a push."""
     if not dry_run:
         if not registry.due(con, "github:checks:next"):
             return 0
@@ -139,8 +140,8 @@ def checks(con, pol, dry_run=False, view=pr_view):
 
     repos = {p["github"].lower() for p in pol["projects"].values() if "github" in p}
     evs = []
-    for (ref,) in con.execute("SELECT DISTINCT l.ref FROM links l JOIN sessions s USING (session_id) "
-                              "WHERE l.kind = 'pr' AND s.state != 'ended'").fetchall():
+    for ref, kind in con.execute("SELECT DISTINCT l.ref, l.kind FROM links l JOIN sessions s USING (session_id) "
+                                 "WHERE l.kind IN ('pr', 'review') AND s.state != 'ended'").fetchall():
         m = re.fullmatch(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/\d+", ref)
         if not m or m[1].lower() not in repos:
             continue
@@ -152,6 +153,15 @@ def checks(con, pol, dry_run=False, view=pr_view):
         if pr["state"] != "OPEN":
             continue
         sha = pr["headRefOid"]
+        if kind == "review":
+            # The first read only records the head: the reviewer started on it. Same id as a notification push.
+            seen = cursor(con, f"github:head:{ref}")
+            if seen and seen != sha:
+                evs.append(ev(ref, f"gh:commit:{sha}", "push", (pr.get("author") or {}).get("login") or "unknown",
+                              now(), f"{ref}/commits/{sha}"))
+            if not dry_run:
+                set_cursor(con, f"github:head:{ref}", sha)
+            continue
         for c in pr.get("statusCheckRollup") or []:
             if c.get("conclusion") in FAILED or c.get("state") in FAILED:
                 name = c.get("name") or c.get("context")

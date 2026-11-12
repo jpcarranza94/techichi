@@ -15,10 +15,14 @@ def route(con, ev, pol):
         return "dropped", None, "own-action"
     # 2. Candidates. A gone Session can come back with claude --resume, so its Events wait.
     order = pol["route"].get(ev["kind"], [])
-    rows = con.execute("SELECT s.* FROM sessions s JOIN links l USING (session_id) "
-                       "WHERE l.kind = ? AND l.ref = ? AND s.state != 'ended' ORDER BY s.created_at DESC",
-                       (ev["kind"], ev["ref"])).fetchall()
+    #    A reviewer holds a review Link, not a pr Link. It gets the pr Events of its PR: the author's pushes and replies.
+    kinds = ("pr", "review") if ev["kind"] == "pr" else (ev["kind"], ev["kind"])
+    rows = con.execute("SELECT DISTINCT s.* FROM sessions s JOIN links l USING (session_id) "
+                       "WHERE l.kind IN (?, ?) AND l.ref = ? AND s.state != 'ended' ORDER BY s.created_at DESC",
+                       (*kinds, ev["ref"])).fetchall()
     rows = sorted(rows, key=lambda r: order.index(r["role"]) if r["role"] in order else len(order))
+    if rows and rows[0]["role"] == "reviewer" and payload.get("actor", "").endswith("[bot]"):
+        return "dropped", None, "bot"  # a review bot on the PR of another person is not the reviewer's round
     if not rows:
         # 3. Sources set admitted = true when the project admission rule admits the ticket, or on a review request
         #    for the operator. Only a queued Event spawns, so a failed spawn does not repeat on each pass.
