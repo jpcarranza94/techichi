@@ -145,6 +145,10 @@ assert b["waiting"] == [{"ticket": "APP-5", "title": "Report", "reason": "needs-
 assert b["unrouted"] == {"slack": 1} and b["slots"] == {"used": 4, "max": pol["spawn"]["max_active"]}
 src = {s["name"]: s["updated_at"] for s in b["sources"]}
 assert list(src) == ["github", "jira", "slack"] and src["jira"] and src["github"] is None
+# Outside the Slack work hours the Slack poll is paused, not stale. The other Sources never pause.
+paused = lambda h: {s["name"]: s["paused"] for s in status.board(con, {**pol, "slack": {**pol["slack"], "work_hours": h}}, {})["sources"]}
+assert paused([0, 24]) == {"github": False, "jira": False, "slack": False}
+assert paused([0, 0]) == {"github": False, "jira": False, "slack": True}
 
 
 def tree(nodes):

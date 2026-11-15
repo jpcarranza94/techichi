@@ -255,6 +255,12 @@ def read(con, pol, out, dry_run=False):
     return line
 
 
+def work_time(pol, t=None):
+    """True inside [slack] work_hours (local, end exclusive) on a day in work_days (ISO, Monday = 1)."""
+    s, t = pol["slack"], t or time.localtime()
+    return s["work_hours"][0] <= t.tm_hour < s["work_hours"][1] and t.tm_wday + 1 in s["work_days"]
+
+
 def poll(con, pol, spawn=subprocess.Popen):
     """One step of the poll on each daemon pass. It never blocks. Return a line for the log, or None."""
     global running
@@ -270,9 +276,8 @@ def poll(con, pol, spawn=subprocess.Popen):
             return f"slack poll: killed after {KILL.seconds // 60} minutes, nothing ingested"
         running = None
         return read(con, pol, out)
-    s, t = pol["slack"], time.localtime()
-    hours = s["work_hours"][0] <= t.tm_hour < s["work_hours"][1] and t.tm_wday + 1 in s["work_days"]
-    if not hours or not registry.due(con, "slack:poll_next"):
+    s = pol["slack"]
+    if not work_time(pol) or not registry.due(con, "slack:poll_next"):
         return None
     running = start(con, pol, spawn)
     if running:

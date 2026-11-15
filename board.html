@@ -27,8 +27,9 @@
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto,
-  "Helvetica Neue", Arial, sans-serif; display: grid; grid-template-columns: minmax(0, 1fr) 400px; min-height: 100vh;
+  "Helvetica Neue", Arial, sans-serif; display: grid; grid-template-columns: minmax(0, 1fr) 380px; min-height: 100vh;
 }
+::selection { background: color-mix(in srgb, var(--focus) 28%, transparent); }
 body.pclosed { grid-template-columns: minmax(0, 1fr); }
 body.pclosed #planner { display: none; }
 a { color: inherit; text-decoration-color: var(--faint); text-underline-offset: 2px; }
@@ -45,69 +46,97 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 [hidden] { display: none !important; }
 
 main { min-width: 0; padding: 0 20px 40px; container-type: inline-size; }
-header.top { padding: 14px 0 8px; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
+header.top { padding: 14px 0 8px; display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; }
 header h1 { font-size: 16px; margin: 0; letter-spacing: .02em; }
 .chip { white-space: nowrap; }
-.chip b { font-weight: 600; }
-.sources { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); }
+.chip b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.sources { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .src.stale { color: var(--warn); }
 .src.stale::after { content: " stale"; font-size: .85em; }
 .offline { color: var(--bad); font-weight: 600; }
 #plannerToggle { margin-left: auto; }
 
-nav[role=tablist] { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+nav[role=tablist] {  /* sticky: on a long board or chat the tabs stay one tap away */
+  display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 14px;
+  position: sticky; top: 0; z-index: 2; background: var(--bg);
+}
 nav [role=tab] {
   border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 6px 12px;
   color: var(--muted); margin-bottom: -1px;
 }
+nav [role=tab]:hover { color: var(--fg); background: none; }
 nav [role=tab][aria-selected=true] { color: var(--fg); border-bottom-color: var(--fg); font-weight: 600; }
 
-/* --- board --- */
-.group { margin: 0 0 14px; --acc: var(--neutral); }
+/* --- board: one grid per row. The tracks are fixed, so the columns line up across the groups. --- */
+.group { margin: 0 0 18px; --acc: var(--neutral); }
 .g-you { --acc: var(--you); } .g-agent { --acc: var(--agent); } .g-waits { --acc: var(--waits); }
 .g-blocked { --acc: var(--blocked); }
 .group h2 {
-  font-size: 12px; letter-spacing: .06em; margin: 0 0 4px; color: var(--acc); font-weight: 700;
+  font-size: 12px; letter-spacing: .06em; margin: 0 0 2px; color: var(--acc); font-weight: 700;
   display: flex; gap: 8px; align-items: baseline;
 }
-.group h2 .n { color: var(--muted); font-weight: 500; }
-.g-you { background: var(--you-bg); border-left: 4px solid var(--you); border-radius: 4px; padding: 10px 12px 6px; }
-.g-you h2 { font-size: 15px; }
-.g-you .row { font-size: 15px; }
-.g-you .name { font-weight: 650; }
-.g-you.empty { background: none; border-left-color: var(--line); padding: 4px 12px; }
-.g-you.empty h2 { font-size: 12px; color: var(--muted); }
+.group h2 .n { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+.group h2 .colh { margin-left: auto; color: var(--faint); font-weight: 500; letter-spacing: .02em; }
+.group.g-you {
+  background: var(--you-bg); border: 1px solid color-mix(in srgb, var(--you) 28%, transparent); border-radius: 6px;
+  padding: 10px 12px 4px;
+}
+.group.g-you h2 { font-size: 14px; }
+.group.g-you .row { font-size: 15px; }
+.group.g-you .name { font-weight: 650; }
+.group.g-you.empty { background: none; border-color: var(--line); padding: 6px 12px; }
+.group.g-you.empty h2 { font-size: 12px; color: var(--muted); }
 .rows { list-style: none; margin: 0; padding: 0; }
 .row {
-  display: grid; gap: 1px 10px; padding: 6px 0; border-top: 1px solid var(--line);
-  grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "name key age" "title title title" "st detail detail";
+  display: grid; gap: 2px 10px; padding: 7px 0; border-top: 1px solid var(--line); align-items: baseline;
+  grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "who who age" "title title title" "st detail detail";
 }
 .rows .row:first-child { border-top: 0; }
-.g-you .row { border-top-color: color-mix(in srgb, var(--you) 18%, transparent); }
+.group.g-you .row { border-top-color: color-mix(in srgb, var(--you) 18%, transparent); }
 .row > * { min-width: 0; overflow-wrap: anywhere; }
-.name { grid-area: name; font-weight: 550; }
-.key { grid-area: key; font-family: var(--mono); font-size: .9em; white-space: nowrap; }
-.title { grid-area: title; color: var(--muted); }
-.st { grid-area: st; color: var(--acc); font-weight: 600; white-space: nowrap; }
+.who { grid-area: who; }
+.who a.name, .node a.k { text-decoration: none; }
+.who a.name:hover, .node a.k:hover { text-decoration: underline; }
+.name { font-weight: 600; }
+.who .key { margin-left: 8px; }
+.key { font-family: var(--mono); font-size: .86em; white-space: nowrap; }
+.who > .key:first-child { margin-left: 0; font-weight: 600; }
+.title {
+  grid-area: title; color: var(--muted);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+}
+.st { grid-area: st; color: var(--acc); font-weight: 500; white-space: nowrap; }
+.st.prob { font-weight: 700; }
+.st.prob::before {  /* a problem: the operator or the idle agent must act. Shape and weight, not another hue. */
+  content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 1px; background: currentColor;
+  margin-right: 6px; vertical-align: 1px;
+}
 .detail { grid-area: detail; }
-.detail .prs { margin-left: 6px; }
-.detail .prs a { font-family: var(--mono); font-size: .9em; margin-right: 6px; }
-.age { grid-area: age; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.detail a { text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); }
+.detail .more { margin-left: 8px; }
+.detail .more a { margin-right: 6px; }
+.flag {  /* NO REVIEWER: an open PR that nobody was asked to review. The operator requests one. */
+  display: inline-block; font-size: 12px; font-weight: 600; line-height: 1.5; padding: 0 7px; border-radius: 999px;
+  color: var(--you); background: var(--you-bg); border: 1px solid color-mix(in srgb, var(--you) 35%, transparent);
+}
+.age { grid-area: age; color: var(--faint); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.age.mid { color: var(--fg); }
+.age.long { color: var(--fg); font-weight: 700; }
 @container (min-width: 760px) {
   .row {
-    grid-template-columns: 10.5rem 6.5rem minmax(0, 1.1fr) 7.5rem minmax(0, 1.6fr) 2.8rem;
-    grid-template-areas: "name key title st detail age"; align-items: baseline; padding: 4px 0;
+    grid-template-columns: minmax(8.5rem, 11rem) minmax(0, 1.4fr) 7.5rem minmax(0, 1.6fr) 3.25rem;
+    grid-template-areas: "who title st detail age"; padding: 5px 0;
   }
-  .title { color: var(--fg); }
+  .who .key { display: block; margin: 0; width: max-content; }
+  .title { color: var(--fg); -webkit-line-clamp: 2; }
+  .st { white-space: normal; }
 }
-.emptyline { color: var(--faint); font-size: 12px; letter-spacing: .04em; margin: 4px 0 18px; }
-.wait .row { grid-template-areas: "key title title" "st detail detail"; grid-template-columns: auto minmax(0, 1fr) auto; }
-@container (min-width: 760px) {
-  .wait .row { grid-template-columns: 6.5rem minmax(0, 1.2fr) 10rem minmax(0, 1.5fr); grid-template-areas: "key title st detail"; }
-}
-.wait .st { color: var(--muted); font-weight: 500; white-space: normal; }
-.outside { color: var(--muted); font-size: 13px; margin-top: 18px; }
-.outside b { font-size: 12px; letter-spacing: .06em; color: var(--faint); margin-right: 6px; }
+.emptyline { display: flex; flex-wrap: wrap; gap: 2px 0; color: var(--faint); font-size: 12px; letter-spacing: .04em; margin: -4px 0 18px; }
+.emptyline span + span::before { content: "\00b7"; margin: 0 10px; }
+.wait .st { color: var(--muted); font-weight: 500; }
+.wait .detail { color: var(--muted); }
+.outside { color: var(--muted); font-size: 13px; margin-top: 18px; display: flex; flex-wrap: wrap; gap: 2px 12px; align-items: baseline; }
+.outside b { font-size: 12px; letter-spacing: .06em; color: var(--faint); }
 
 /* --- chain --- */
 .tree, .tree ul { list-style: none; margin: 0; padding: 0; }
@@ -138,8 +167,13 @@ nav [role=tab][aria-selected=true] { color: var(--fg); border-bottom-color: var(
 .card.wide { grid-column: 1 / -1; }
 .card h3 { font-size: 13px; margin: 0 0 8px; font-weight: 600; }
 .card .note { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+.card.empty { display: flex; flex-direction: column; }
+.card.empty .note {
+  flex: 1; margin: 0; min-height: 72px; display: flex; align-items: center; justify-content: center; text-align: center;
+  padding: 10px 14px; border: 1px dashed var(--line); border-radius: 6px; background: var(--bg);
+}
 .card svg { display: block; width: 100%; height: auto; overflow: visible; }
-.card svg text { fill: var(--muted); font-size: 10px; font-family: inherit; }
+.card svg text { fill: var(--muted); font-size: 10px; font-family: inherit; font-variant-numeric: tabular-nums; }
 .stats { display: flex; flex-wrap: wrap; gap: 10px 24px; }
 .stat .v { font-size: 28px; font-weight: 650; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .stat .v small { font-size: 13px; color: var(--muted); font-weight: 500; margin-left: 3px; }
@@ -154,34 +188,40 @@ nav [role=tab][aria-selected=true] { color: var(--fg); border-bottom-color: var(
   position: sticky; top: 0; height: 100vh; height: 100dvh; display: flex; flex-direction: column;
   border-left: 1px solid var(--line); background: var(--panel); min-width: 0;
 }
-.ph { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
-.ph h2 { font-size: 14px; margin: 0; }
-.ph #pclose { margin-left: auto; }
+.ph { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.ph h2 { font-size: 13px; margin: 0; letter-spacing: .02em; }
+.ph #pclose { margin-left: auto; padding: 2px 10px; font-size: 13px; }
 .pst { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
-.pst::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.pst::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
 .pst.working::before { background: var(--agent); }
 .pst.idle::before, .pst.done::before { background: var(--ok); }
 .pst.blocked::before { background: var(--you); }
-.msgs { flex: 1; overflow-y: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 10px; }
+.pst.blocked { color: var(--you); }
+/* The pane is secondary to the board: one step smaller, tighter. */
+.msgs { flex: 1; overflow-y: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 12px; font-size: 13px; line-height: 1.45; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .msg { min-width: 0; }
-.msg .meta { font-size: 11px; color: var(--faint); display: flex; gap: 8px; margin-bottom: 2px; }
+.msg .meta { font-size: 11px; color: var(--faint); display: flex; gap: 8px; margin-bottom: 1px; font-variant-numeric: tabular-nums; }
 .msg .meta .who { font-weight: 600; color: var(--muted); }
 .msg .body { overflow-wrap: anywhere; }
-.m-user .body { white-space: pre-wrap; border-left: 3px solid var(--agent); padding-left: 8px; }
-.m-pending .body { white-space: pre-wrap; border-left: 3px dashed var(--faint); padding-left: 8px; color: var(--muted); }
+.m-user .body { white-space: pre-wrap; border-left: 2px solid var(--agent); padding-left: 8px; }
+.m-pending .body { white-space: pre-wrap; border-left: 2px dashed var(--faint); padding-left: 8px; color: var(--muted); }
 .m-factory details { font-size: 12px; color: var(--muted); }
 .m-factory summary { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .m-factory .body { white-space: pre-wrap; margin-top: 4px; }
-.m-assistant .body p { margin: 0 0 6px; }
-.m-assistant .body ul, .m-assistant .body ol { margin: 0 0 6px; padding-left: 20px; }
-.msg code { font-family: var(--mono); font-size: .88em; background: var(--hover); padding: 0 3px; border-radius: 3px; }
-.msg pre { font-family: var(--mono); font-size: 12px; background: var(--hover); padding: 8px; border-radius: 6px; overflow-x: auto; margin: 0 0 6px; }
+.m-assistant .body p { margin: 0 0 5px; }
+.m-assistant .body ul, .m-assistant .body ol { margin: 0 0 5px; padding-left: 18px; }
+.m-assistant .body li + li { margin-top: 1px; }
+.m-assistant .body > :last-child { margin-bottom: 0; }
+.msg code { font-family: var(--mono); font-size: .9em; background: var(--hover); padding: 0 3px; border-radius: 3px; }
+.msg pre { font-family: var(--mono); font-size: 12px; background: var(--hover); padding: 8px; border-radius: 6px; overflow-x: auto; margin: 0 0 5px; }
 .msg pre code { background: none; padding: 0; }
-#pform { border-top: 1px solid var(--line); padding: 10px 14px; background: var(--panel); }
+#pform { border-top: 1px solid var(--line); padding: 8px 14px 10px; background: var(--panel); }
+#pform label { display: block; font-size: 12px; margin-bottom: 4px; }
 #ptext {
-  width: 100%; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
-  padding: 8px; resize: vertical; min-height: 64px; max-height: 40vh;
+  width: 100%; font: inherit; font-size: 13px; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 8px; resize: vertical; min-height: 56px; max-height: 40vh; caret-color: var(--focus);
 }
+#ptext:focus-visible { outline-offset: 0; }
 .prow { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
 .prow #phint { font-size: 12px; flex: 1; }
 .prow #phint.err { color: var(--bad); }
@@ -196,7 +236,8 @@ nav [role=tab][aria-selected=true] { color: var(--fg); border-bottom-color: var(
   .narrow-only { display: inline-block; }
   #planner, body.pclosed #planner { display: none; }
   body[data-tab=planner] #planner { display: flex; position: static; height: auto; min-height: 70vh; border-left: 0; background: var(--bg); }
-  body[data-tab=planner] main { padding-bottom: 0; }
+  body[data-tab=planner] main { padding-bottom: 0; position: sticky; top: 0; z-index: 3; background: var(--bg); }
+  body[data-tab=planner] nav[role=tablist] { margin-bottom: 0; }
   body[data-tab=planner] .msgs { overflow: visible; padding: 4px 16px 10px; }
   body[data-tab=planner] #pform { position: sticky; bottom: 0; padding: 10px 16px; background: var(--bg); }
 }
@@ -236,7 +277,7 @@ nav [role=tab][aria-selected=true] { color: var(--fg); border-bottom-color: var(
   </div>
   <div class="msgs" id="msgs"></div>
   <form id="pform">
-    <label for="ptext" class="muted" style="font-size:12px">Message the planner. Ctrl+Enter or Cmd+Enter sends.</label>
+    <label for="ptext" class="muted">Message the planner. Ctrl+Enter or Cmd+Enter sends.</label>
     <textarea id="ptext" rows="3"></textarea>
     <div class="prow"><span id="phint" role="status"></span><button type="submit" id="psend" disabled>Send</button></div>
   </form>
@@ -276,10 +317,20 @@ function age(t) {
   const m = Math.floor(s / 60);
   return m < 60 ? m + "m" : m < 2880 ? Math.floor(m / 60) + "h" : Math.floor(m / 1440) + "d";
 }
-function ageEl(cls, t) {
+function ageEl(cls, t, inStatus) {
   const e = el("span", cls, age(t));
-  if (t) { e.dataset.t = t; e.title = new Date(ms(t)).toLocaleString(); }
+  if (t) {
+    e.dataset.t = t;
+    e.title = (inStatus ? "In this status since " : "") + new Date(ms(t)).toLocaleString();
+    if (inStatus) { e.dataset.st = "1"; ageTone(e); }
+  }
   return e;
+}
+// Time in the current status: a long wait reads by weight, not by another color. 4 h and more, 1 day and more.
+function ageTone(e) {
+  const h = (Date.now() - (ms(e.dataset.t) || Date.now())) / 3600000;
+  e.classList.toggle("mid", h >= 4 && h < 24);
+  e.classList.toggle("long", h >= 24);
 }
 function clock(t) {
   const v = ms(t);
@@ -310,7 +361,7 @@ function netOk() { net.offlineSince = null; $("offline").hidden = true; }
 // --- board ---
 const GROUP_CLASS = { "YOU": "g-you", "AGENT": "g-agent", "WAITS FOR OTHERS": "g-waits", "BLOCKED": "g-blocked" };
 const STALE_MIN = { slack: 120 };
-const B = { data: null, sig: null, ticketBase: null };
+const B = { data: null, sig: null, ticketBase: null, projects: new Set() };
 
 function ticketUrl(key) { return B.ticketBase && key ? B.ticketBase + encodeURIComponent(key) : null; }
 function prLabel(l) {
@@ -318,43 +369,94 @@ function prLabel(l) {
   return (l.kind === "review" ? "review " : "") + (m ? "#" + m[1] : "PR");
 }
 
+function srcStale(x) {
+  const v = ms(x.updated_at);
+  return !x.paused && (v == null || Date.now() - v > (STALE_MIN[x.name] || 30) * 60000);
+}
 function renderHeader(b) {
   const s = $("slots");
   s.replaceChildren(document.createTextNode("slots "), el("b", null, b.slots.used + "/" + b.slots.max));
   const src = $("sources");
   src.replaceChildren(...b.sources.map((x) => {
-    const v = ms(x.updated_at), lim = (STALE_MIN[x.name] || 30) * 60000;
-    const e = el("span", "src" + (v == null || Date.now() - v > lim ? " stale" : ""), x.name + " ");
-    e.appendChild(x.updated_at ? ageEl("", x.updated_at) : el("span", null, "never"));
+    const e = el("span", "src" + (srcStale(x) ? " stale" : ""), x.name + " ");
+    if (x.paused) {  // outside the work hours of the poll: an old read is expected, so no warning tone
+      e.appendChild(el("span", null, "paused"));
+      e.title = "No poll outside the work hours." + (x.updated_at ? " Last read " + new Date(ms(x.updated_at)).toLocaleString() + "." : "");
+    } else if (x.updated_at) {
+      const a = ageEl("", x.updated_at);
+      e.title = "Last good read " + a.title;
+      e.appendChild(a);
+    } else e.appendChild(el("span", null, "never"));
     return e;
   }));
   const un = Object.entries(b.unrouted || {});
   $("unrouted").textContent = un.length ? "unrouted " + un.map(([k, n]) => k + " " + n).join(", ") : "";
 }
 
-function rowEl(r) {
-  const li = el("li", "row");
-  li.appendChild(el("span", "name", r.name));
-  const tl = r.ticket && (r.links || []).find((l) => l.kind === "ticket" && l.ref === r.ticket);
-  li.appendChild(r.ticket ? link(tl && tl.url, r.ticket, "key") : el("span", "key", ""));
-  li.appendChild(el("span", "title", r.title));
-  li.appendChild(el("span", "st", r.status));
-  const d = el("span", "detail", r.detail);
-  const prs = (r.links || []).filter((l) => (l.kind === "pr" || l.kind === "review") && isHttps(l.url));
-  if (prs.length) {
-    const p = el("span", "prs");
-    prs.forEach((l) => { const a = link(l.url, prLabel(l)); a.title = l.url; p.appendChild(a); });
+// A problem state: the operator or the idle agent must act. "working" and "in review" are progress.
+const PROBLEM = new Set(["needs you", "fix needed", "check again", "review not posted", "no data yet", "no PR state"]);
+
+// The detail with each fact once: a "#123" that names a PR of the row becomes its link, a ticket key links to Jira,
+// and NO REVIEWER becomes a flag. A PR link that the text does not name follows the text.
+function detailEl(r) {
+  const d = el("span", "detail"), prs = {}, used = new Set();
+  (r.links || []).forEach((l) => {
+    const m = (l.kind === "pr" || l.kind === "review") && isHttps(l.url) && /\/pull\/(\d+)/.exec(l.url);
+    if (m && !prs[m[1]]) prs[m[1]] = l;
+  });
+  String(r.detail || "").split(/(#\d+\b|\bNO REVIEWER\b|\b[A-Z][A-Z0-9]+-\d+\b)/).forEach((part, i) => {
+    if (!part) return;
+    if (i % 2 === 0) { d.appendChild(document.createTextNode(part)); return; }
+    if (part === "NO REVIEWER") {
+      const f = el("span", "flag", "no reviewer");
+      f.title = "Nobody is asked to review this PR. Request a reviewer.";
+      d.appendChild(f);
+      return;
+    }
+    const l = part[0] === "#" ? prs[part.slice(1)] : null;
+    if (l) { used.add(l); const a = link(l.url, part); a.title = (l.kind === "review" ? "Review " : "PR ") + l.url; d.appendChild(a); }
+    else if (part[0] !== "#" && B.projects.has(part.split("-")[0]) && ticketUrl(part)) d.appendChild(link(ticketUrl(part), part));
+    else d.appendChild(document.createTextNode(part));
+  });
+  const rest = Object.values(prs).filter((l) => !used.has(l));
+  if (rest.length) {
+    const p = el("span", "more");
+    rest.forEach((l) => { const a = link(l.url, prLabel(l)); a.title = l.url; p.appendChild(a); });
     d.appendChild(p);
   }
-  li.appendChild(d);
-  li.appendChild(ageEl("age", r.since));
+  return d;
+}
+
+// The name and the ticket key often say the same thing (app-12, APP-12): show it once, linked to the ticket.
+function whoEl(name, key, url) {
+  const w = el("span", "who");
+  if (key && String(name).toLowerCase() === key.toLowerCase()) {
+    const a = link(url, name, "name");
+    if (a.href) a.title = key + " in Jira";
+    w.appendChild(a);
+  } else {
+    if (name) w.appendChild(el("span", "name", name));
+    if (key) w.appendChild(link(url, key, "key"));
+  }
+  return w;
+}
+
+function titleEl(t) { const e = el("span", "title", t); if (t) e.title = t; return e; }
+
+function rowEl(r) {
+  const li = el("li", "row");
+  const tl = r.ticket && (r.links || []).find((l) => l.kind === "ticket" && l.ref === r.ticket);
+  const prob = PROBLEM.has(r.status) || /\bNO REVIEWER\b/.test(r.detail || "");
+  li.append(whoEl(r.name, r.ticket, (tl && tl.url) || ticketUrl(r.ticket)), titleEl(r.title),
+            el("span", "st" + (prob ? " prob" : ""), r.status), detailEl(r), ageEl("age", r.since, true));
   return li;
 }
 
-function groupEl(name, cls, rows, makeRow) {
+function groupEl(name, cls, rows, makeRow, colh) {
   const sec = el("section", "group " + cls);
   const h = el("h2", null, name);
   h.appendChild(el("span", "n", String(rows.length)));
+  if (colh) h.appendChild(el("span", "colh", "time in status"));
   const ul = el("ul", "rows");
   rows.forEach((r) => ul.appendChild(makeRow(r)));
   sec.append(h, ul);
@@ -363,27 +465,33 @@ function groupEl(name, cls, rows, makeRow) {
 
 function waitRow(w) {
   const li = el("li", "row");
-  li.append(link(ticketUrl(w.ticket), w.ticket, "key"), el("span", "title", w.title), el("span", "st", w.reason),
-            el("span", "detail muted", w.note));
+  li.append(whoEl("", w.ticket, ticketUrl(w.ticket)), titleEl(w.title), el("span", "st", w.reason),
+            el("span", "detail", w.note));
   return li;
 }
 
 function renderBoard(b) {
   const out = [], empty = [];
+  let first = true;
   for (const g of b.groups) {
     const cls = GROUP_CLASS[g.name] || "g-other";
-    if (g.rows.length) out.push(groupEl(g.name, cls, g.rows, rowEl));
+    if (g.rows.length) { out.push(groupEl(g.name, cls, g.rows, rowEl, first)); first = false; }
     else if (g.name === "YOU") {
       const sec = el("section", "group g-you empty"), h = el("h2", null, "YOU");
       h.appendChild(el("span", "n", "0, nothing needs you"));
       sec.appendChild(h); out.push(sec);
     } else empty.push(g.name);
   }
-  if (empty.length) out.push(el("p", "emptyline", empty.map((n) => n + " 0").join("   ")));
+  if (empty.length) {
+    const p = el("p", "emptyline");
+    p.setAttribute("aria-label", "Empty groups");
+    empty.forEach((n) => p.appendChild(el("span", null, n + " 0")));
+    out.push(p);
+  }
   if (b.waiting.length) out.push(groupEl("WAITING TO START", "g-other wait", b.waiting, waitRow));
   const o = el("p", "outside");
   o.appendChild(el("b", null, "NOT IN THE FACTORY " + b.outside.length));
-  o.appendChild(document.createTextNode(b.outside.join("  ") || "none"));
+  (b.outside.length ? b.outside : ["none"]).forEach((n) => o.appendChild(el("span", null, n)));
   out.push(o);
   $("p-board").replaceChildren(...out);
 }
@@ -423,8 +531,11 @@ async function loadBoard() {
     const sig = JSON.stringify(Object.assign({}, b, { at: null }));
     if (sig !== B.sig) {  // same data: no DOM change, so no flicker and no lost focus
       B.sig = sig; B.data = b;
-      for (const g of b.groups) for (const r of g.rows) for (const l of r.links || []) {
-        if (l.kind === "ticket" && isHttps(l.url) && l.url.endsWith(l.ref)) B.ticketBase = l.url.slice(0, -l.ref.length);
+      for (const g of b.groups) for (const r of g.rows) {
+        if (r.ticket) B.projects.add(r.ticket.split("-")[0]);
+        for (const l of r.links || []) {
+          if (l.kind === "ticket" && isHttps(l.url) && l.url.endsWith(l.ref)) B.ticketBase = l.url.slice(0, -l.ref.length);
+        }
       }
       renderHeader(b); renderBoard(b); renderChain(b);
       const you = (b.groups.find((g) => g.name === "YOU") || { rows: [] }).rows.length;
@@ -438,10 +549,11 @@ function tick() {
   document.querySelectorAll("[data-t]").forEach((e) => {
     const a = age(e.dataset.t);
     e.textContent = e.id === "updated" ? "updated " + a + " ago" : a;
+    if (e.dataset.st) ageTone(e);
   });
   if (B.data) document.querySelectorAll(".src").forEach((e, i) => {
-    const x = B.data.sources[i], v = x && ms(x.updated_at);
-    if (x) e.classList.toggle("stale", v == null || Date.now() - v > (STALE_MIN[x.name] || 30) * 60000);
+    const x = B.data.sources[i];
+    if (x) e.classList.toggle("stale", srcStale(x));
   });
 }
 
@@ -522,11 +634,11 @@ const DRAW = {
   },
   heat(card, data, unit) {
     card.classList.add("wide");
-    const C = 14, L = 30, T = 14, cells = {};
+    const C = 18, L = 32, T = 16, cells = {};
     let max = 0;
     data.forEach((d) => { const v = +d.value || 0; cells[d.day * 24 + d.hour] = v; max = Math.max(max, v); });
     const s = svg("svg", { viewBox: `0 0 ${L + 24 * C} ${T + 7 * C}`, role: "img", "aria-label": card.title || "heat map" });
-    s.style.maxWidth = "720px";
+    s.style.maxWidth = (L + 24 * C) + "px";  // drawn at 1:1, so the labels keep the size of the other charts
     for (let h = 0; h < 24; h += 3) svg("text", { x: L + h * C + C / 2, y: 10, "text-anchor": "middle" }, s, h);
     for (let d = 0; d < 7; d++) {
       svg("text", { x: L - 4, y: T + d * C + C * 0.7, "text-anchor": "end" }, s, DAYS[d]);
@@ -554,6 +666,7 @@ function renderMetrics(cards) {
       try { card.appendChild(draw(card, c.data, c.unit || "")); drawn = true; } catch (e) { /* a bad shape: the note still shows */ }
     }
     const note = c.note || (drawn ? "" : "No data in this window.");
+    if (!drawn) card.classList.add("empty");  // the note sits where the chart will be
     if (note) card.appendChild(el("p", "note", note));
     return card;
   }));
@@ -652,7 +765,8 @@ function renderState() {
   const st = P.state, e = $("pstate"), hint = $("phint"), btn = $("psend");
   const s = !st || !st.present ? "absent" : st.agent_status || "unknown";
   e.className = "pst " + s;
-  e.textContent = s === "blocked" ? "waits at a prompt" : s;
+  // herdr words to operator words: "done" means the planner ended its turn and is idle.
+  e.textContent = { done: "idle", idle: "idle", working: "working", blocked: "waiting at a prompt", absent: "not running" }[s] || s;
   $("tab-planner").textContent = s === "working" ? "Planner (working)" : "Planner";
   btn.disabled = s === "absent" || P.sending;
   if (hint.classList.contains("err")) return;
@@ -665,7 +779,9 @@ async function loadPlanner() {
     const d = await getJSON("/api/planner" + (P.last ? "?after=" + encodeURIComponent(P.last) : ""));
     netOk();
     P.state = d.state;
-    const stick = !P.loaded || nearBottom();
+    // Follow the newest message only when the pane shows and the operator has not scrolled up. On a phone the
+    // scroller is the page itself, so a hidden pane must never move it.
+    const stick = paneVisible() && (!P.loaded || nearBottom());
     const fresh = (d.messages || []).filter((m) => { const k = m.id || m.at + m.text; if (P.ids.has(k)) return false; P.ids.add(k); return true; });
     if (fresh.length) {
       const box = $("msgs");
@@ -731,6 +847,7 @@ function selectTab(name, focus) {
   });
   ["board", "chain", "metrics"].forEach((n) => { $("p-" + n).hidden = n !== name; });
   store.set("techichi.tab", name);
+  if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);  // a bookmark opens this tab
   if (name === "metrics" && M.loadedFor !== M.days) loadMetrics();
   if (name === "planner") { renderPending(); toBottom(); }
   schedulePlanner();
@@ -756,6 +873,9 @@ function setPane(open) {
 $("plannerToggle").addEventListener("click", () => { setPane(true); $("ptext").focus(); });
 $("pclose").addEventListener("click", () => { setPane(false); $("plannerToggle").focus(); });
 narrowMQ.addEventListener("change", () => selectTab(document.body.dataset.tab));
+const TAB_NAMES = TABS.map((t) => t.dataset.tab);
+function hashTab() { const h = location.hash.slice(1); return TAB_NAMES.includes(h) ? h : null; }
+window.addEventListener("hashchange", () => { if (hashTab()) selectTab(hashTab()); });
 
 // --- the loops: board every 30 s, all polls paused while the page is hidden ---
 let boardTimer = null;
@@ -772,7 +892,7 @@ document.addEventListener("visibilitychange", () => {
 setInterval(() => { if (!document.hidden) tick(); }, 5000);
 
 setPane(store.get("techichi.pane") !== "closed");
-selectTab(store.get("techichi.tab") || "board");
+selectTab(hashTab() || store.get("techichi.tab") || "board");
 boardLoop();
 loadPlanner();
 </script>

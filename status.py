@@ -6,6 +6,7 @@ herdr, and never reads the network.
 import json
 
 import registry
+import slack_source
 
 GROUPS = ["YOU", "AGENT", "WAITS FOR OTHERS", "BLOCKED", "MERGED, NOT DONE", "CAN CLOSE", "CHECK"]
 ORDER = ["fix needed", "ready to merge", "approved", "in review", "draft"]  # the first open PR of a Session wins
@@ -167,7 +168,10 @@ def board(con, pol, names):
     return {
         "at": registry.now(),
         "slots": {"used": registry.slots_used(con), "max": pol["spawn"]["max_active"]},
-        "sources": [{"name": n, "updated_at": cur.get(cursor_of.get(n, f"source:{n}"))} for n in pol["factory"]["sources"]],
+        # paused: the Slack poll runs only in [slack] work_hours and work_days, so an old cursor is no alarm then.
+        "sources": [{"name": n, "updated_at": cur.get(cursor_of.get(n, f"source:{n}")),
+                     "paused": n == "slack" and "slack" in pol and not slack_source.work_time(pol)}
+                    for n in pol["factory"]["sources"]],
         "groups": [{"name": g, "rows": groups[g]} for g in GROUPS],
         "waiting": [{"ticket": w["ref"], "title": (d["tickets"].get(w["ref"]) or {}).get("summary") or "",
                      "reason": w["reason"] or "queued", "note": w["note"] or ""} for w in d["wait"]],
