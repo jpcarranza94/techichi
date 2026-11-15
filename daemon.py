@@ -18,6 +18,7 @@ import herdr  # noqa: E402
 import jira_source  # noqa: E402
 import registry  # noqa: E402
 import slack_source  # noqa: E402
+import status  # noqa: E402
 from router import admit, route, wrapper  # noqa: E402,F401  (route and admit: daemon.route stays for callers)
 
 NOW = registry.NOW
@@ -280,6 +281,27 @@ def resync(con, pol, tokens=False):
     except Exception as e:  # the cleanup check must never cause a herdr reconnect
         log("cleanup failed:", str(e)[:300])
     page_old_holds(con, pol)
+    try:
+        log_status(con, pol)
+    except Exception as e:  # the board log must never break a pass
+        log("status log failed:", str(e)[:300])
+
+
+def log_status(con, pol):
+    """Append a status_log row for each Session whose board status changed, and one ENDED row when it ends."""
+    now = registry.now()
+    last = {r["session_id"]: r for r in con.execute(
+        "SELECT s.session_id, s.state, (SELECT grp FROM status_log l WHERE l.session_id = s.session_id "
+        "ORDER BY rowid DESC LIMIT 1) AS grp, (SELECT status FROM status_log l WHERE l.session_id = s.session_id "
+        "ORDER BY rowid DESC LIMIT 1) AS status FROM sessions s")}
+    # The first row of a Session takes the time that the rule gives, such as the time of the flag: the status is
+    # older than the log.
+    rows = [(sid, g, st, since if last[sid]["grp"] is None and since and since < now else now)
+            for sid, (g, st, _, since) in status.statuses(status.load(con), pol).items()
+            if (last[sid]["grp"], last[sid]["status"]) != (g, st)]
+    rows += [(sid, "ENDED", "ended", now) for sid, r in last.items()
+             if r["state"] == "ended" and r["grp"] not in (None, "ENDED")]
+    con.executemany("INSERT INTO status_log (session_id, grp, status, at) VALUES (?, ?, ?, ?)", rows)
 
 
 def main():

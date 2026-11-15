@@ -435,4 +435,35 @@ con.execute("INSERT INTO needs (session_id, text, at) VALUES ('flag-live', 'appr
             "('flag-ended', 'stale', '2026-11-01T10:00:00Z')")
 daemon.apply_tokens(con)
 assert flags == [("p-flag-live", "approve the plan")], flags
+
+# The status log: one row when the board status of a Session changes, and one ENDED row when it ends.
+sl = registry.connect(Path(tempfile.mkdtemp(), "sl.db"))
+for sid, role in (("w", "worker"), ("pl", "planner"), ("hand", "worker")):
+    sl.execute("INSERT INTO sessions (session_id, role, state, agent_status) VALUES (?, ?, 'live', 'idle')", (sid, role))
+registry.link(sl, "ticket", "APP-1", "w", "spawner")
+registry.set_ref(sl, "ticket", "APP-1", {"summary": "Add export", "status": "To Do", "statusCategory": "new", "blockers": []})
+log_rows = lambda: [tuple(r) for r in sl.execute("SELECT session_id, grp, status FROM status_log ORDER BY rowid")]
+sl.execute("UPDATE sessions SET last_seen = '2026-01-01T00:00:00Z' WHERE session_id = 'w'")
+daemon.log_status(sl, pol)
+daemon.log_status(sl, pol)
+assert log_rows() == [("w", "CHECK", "no PR")]  # not the planner, not a Session outside the factory
+# The first row takes the time of the rule: the status is older than the log. A later row takes the time of the pass.
+assert sl.execute("SELECT at FROM status_log").fetchone()[0] == "2026-01-01T00:00:00Z"
+sl.execute("UPDATE sessions SET agent_status = 'working' WHERE session_id = 'w'")
+daemon.log_status(sl, pol)
+sl.execute("UPDATE sessions SET state = 'ended' WHERE session_id IN ('w', 'hand')")
+daemon.log_status(sl, pol)
+daemon.log_status(sl, pol)
+assert log_rows() == [("w", "CHECK", "no PR"), ("w", "AGENT", "working"), ("w", "ENDED", "ended")], log_rows()
+# A failed status log never breaks a pass.
+real = herdr.snapshot, daemon.factory.cleanup_closed, daemon.factory.auto_cleanup, daemon.status.statuses
+herdr.snapshot = lambda: {"agents": []}
+daemon.factory.cleanup_closed = daemon.factory.auto_cleanup = lambda *a: None
+daemon.status.statuses = lambda *a: 1 / 0
+lines = []
+real_log, daemon.log = daemon.log, lambda *a: lines.append(" ".join(map(str, a)))
+daemon.resync(sl, {**pol, "factory": {**pol["factory"], "sources": []}})
+assert any(x.startswith("status log failed") for x in lines), lines
+herdr.snapshot, daemon.factory.cleanup_closed, daemon.factory.auto_cleanup, daemon.status.statuses = real
+daemon.log = real_log
 print("ok")

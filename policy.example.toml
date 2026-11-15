@@ -82,3 +82,15 @@ inbox            = false  # rule f: DMs and mentions to the planner
 [cleanup]
 # Jira status names, not the category. Some teams put "Ready for Deploy" in the done category.
 done_statuses = ["Done", "Won't Do"]
+
+[board]
+# factory.py board ignores reviews by these logins when it names the reviewers. A login that ends with [bot] is a bot too.
+# bots   = ["coderabbitai", "github-actions", "copilot-pull-request-reviewer"]  # the default is shown
+# A PR on another base branch is a stack, and the board says "on <base>".
+# trunks = ["main", "master", "dev", "develop"]  # the default is shown
+# board.py, the web board, listens here. Keep the host on loopback. A private proxy such as `tailscale serve` exposes it.
+# host  = "127.0.0.1"  # the default is shown
+# port  = 8377         # the default is shown
+# The Host headers that board.py accepts. Any other Host gets 403: this stops DNS rebinding. Add the proxy's host name,
+# for example "mybox.tailnet-name.ts.net". The default is loopback on the port.
+# hosts = ["127.0.0.1:8377", "localhost:8377"]

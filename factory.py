@@ -4,20 +4,23 @@
   factory.py claim REF [--session PANE|NAME|UUID]   link a Session to a ticket, a PR, or a Slack thread
   factory.py needs TEXT [--session ...]             flag a Session for the operator. --clear removes the flag.
   factory.py status                                 the whole factory, read only
+  factory.py board [--json] [--chain]               one status for each Session, read only. No AI.
   factory.py cleanup KEY                            end the worker Session of a ticket and remove its checkout
 """
 import argparse
+import json
 import os
 import re
 import subprocess
 import sys
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import config
 import harness
 import herdr
 import registry
+import status as board_status  # status() below is the status command
 
 NOW = registry.NOW
 IDLE_FOR = timedelta(minutes=60)
@@ -105,10 +108,7 @@ def needs(con, pol, text, target=None, clear=False):
 def status(con, pol, names=None):
     out = []
     if names is None:
-        try:
-            names = {herdr.session_id(a): a.get("name") for a in herdr.agents()}
-        except Exception:
-            names = {}
+        names = agent_names()
     rows = con.execute("SELECT * FROM sessions WHERE state != 'ended' ORDER BY role, created_at").fetchall()
     out.append(f"Sessions: {len(rows)} not ended")
     for s in rows:
@@ -141,6 +141,66 @@ def status(con, pol, names=None):
     out.append("Planner: " + (f"{r['session_id'][:8]} {r['state']} {r['agent_status'] or '-'} in {r['pane_id']}"
                               if r else "none"))
     return "\n".join(out)
+
+
+# --- board ---------------------------------------------------------------------------------------------------
+
+COLOR = {"YOU": 31, "AGENT": 36, "WAITS FOR OTHERS": 33, "BLOCKED": 35, "CHECK": 31}
+
+
+def agent_names():
+    try:
+        return {herdr.session_id(a): a.get("name") for a in herdr.agents()}
+    except Exception:
+        return {}
+
+
+def age(t):
+    if not t:
+        return ""
+    m = int((datetime.now(timezone.utc) - datetime.fromisoformat(t)).total_seconds() // 60)
+    return f"{m}m" if m < 60 else f"{m // 60}h" if m < 2880 else f"{m // 1440}d"
+
+
+def board_text(b, tty=False):
+    """The board of status.board() as text. ANSI color only on a terminal."""
+    def c(text, code):
+        return f"\033[{code}m{text}\033[0m" if tty and code else text
+
+    # Slack polls only in work hours, so its age is no alarm. Another Source older than an hour gets a "!".
+    src = "  ".join(f"{x['name']} {age(x['updated_at']) or '-'}" + (" !" if x["name"] != "slack" and (
+        not x["updated_at"] or age(x["updated_at"])[-1] != "m") else "") for x in b["sources"])
+    out = [c(f"FACTORY  {datetime.now():%a %b %d %H:%M}    slots {b['slots']['used']}/{b['slots']['max']}    "
+             f"sources: {src}", 1)]
+    for g in b["groups"]:
+        if g["rows"]:
+            out += ["", c(f"{g['name']}  {len(g['rows'])} " + "─" * (100 - len(g["name"])), f"1;{COLOR.get(g['name'], 37)}")]
+            for r in g["rows"]:
+                st = c(f"{r['status']:<15}", COLOR.get(g["name"]))
+                out.append(f" {r['name'][:22]:<22} {r['ticket'] or '':<9} {r['title'][:34]:<34} {st} "
+                           f"{r['detail'][:70]:<70} {age(r['since']):>4}")
+    empty = [g["name"] for g in b["groups"] if not g["rows"] and g["name"] != "CHECK"]
+    if empty:
+        out += ["", c("  ".join(f"{g}  0" for g in empty), 90)]
+    if b["waiting"]:
+        out += ["", c(f"WAITING TO START  {len(b['waiting'])} " + "─" * 84, "1;37")]
+        out += [f" {w['ticket']:<9} {w['title'][:34]:<34} {w['reason'][:24]:<24} {w['note'][:80]}" for w in b["waiting"]]
+    out += ["", c(f"NOT IN THE FACTORY  {len(b['outside'])}   " + "  ".join(b["outside"]) + "    UNROUTED  " +
+                  ", ".join(f"{k} {n}" for k, n in b["unrouted"].items()), 90)]
+    return "\n".join(out)
+
+
+def chain_text(b):
+    out = []
+
+    def show(n, pre="", last=True, top=True):
+        out.append(f"{pre}{'' if top else '└─ ' if last else '├─ '}{n['key']}  {n['title'][:40]:<40}  {n['state'][:80]}")
+        for i, k in enumerate(n["children"]):
+            show(k, pre + ("" if top else "   " if last else "│  "), i == len(n["children"]) - 1, False)
+
+    for root in b["chain"]:
+        show(root)
+    return "\n".join(out) or 'No open "is blocked by" link between the tickets on the board.'
 
 
 # --- cleanup -------------------------------------------------------------------------------------------------
@@ -390,6 +450,9 @@ def main(argv=None):
     n.add_argument("--clear", action="store_true", help="remove the flag")
     n.add_argument("--session", help="pane id, agent name, or Claude session UUID. Default: this pane.")
     sub.add_parser("status")
+    b = sub.add_parser("board")
+    b.add_argument("--json", action="store_true", help="print the board as JSON")
+    b.add_argument("--chain", action="store_true", help='the "is blocked by" links as a tree')
     k = sub.add_parser("cleanup")
     k.add_argument("key")
     a = ap.parse_args(argv)
@@ -402,6 +465,9 @@ def main(argv=None):
             print(needs(con, pol, a.text, a.session, a.clear))
         elif a.cmd == "status":
             print(status(con, pol))
+        elif a.cmd == "board":
+            b = board_status.board(con, pol, agent_names())
+            print(json.dumps(b, indent=1) if a.json else chain_text(b) if a.chain else board_text(b, sys.stdout.isatty()))
         else:
             sys.exit(0 if cleanup_by_hand(con, pol, a.key) else 1)
     except ValueError as e:

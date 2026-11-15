@@ -97,6 +97,30 @@ To see the factory, run `python3 ~/techichi/factory.py status`.
 
 After you update the repo, run `python3 ~/techichi/install.py skills`. Then restart the daemon: `launchctl kickstart -k gui/$(id -u)/techichi` on macOS, or `systemctl --user restart techichi` on Linux.
 
+## Web board
+
+The web board shows the board, the blocker chain, the metrics, and the planner chat in one page. It works on a laptop and on a phone. Run it by hand:
+
+```sh
+python3 ~/techichi/board.py
+```
+
+Then open `http://127.0.0.1:8377/`. To run it as a service, write its service file and follow the printed commands:
+
+```sh
+python3 ~/techichi/install.py board
+```
+
+On macOS it writes `~/.config/techichi/techichi-board.plist`, and the log is `~/.config/techichi/board.log`. On Linux it writes `~/.config/systemd/user/techichi-board.service`.
+
+The board has no login. Anyone who reaches its port can prompt your planner, and the planner has your logins. Keep `[board] host` on `127.0.0.1`. To open the board from another device, put a private proxy in front of it, for example `tailscale serve`:
+
+```sh
+tailscale serve --bg 8377
+```
+
+Then add the proxy's host name to `[board] hosts`, for example `hosts = ["127.0.0.1:8377", "localhost:8377", "mybox.tailnet-name.ts.net"]`. The list replaces the default, so keep the loopback entries. If another service has HTTPS port 443 on that machine, serve on another port, for example `tailscale serve --bg --https=8443 8377`, and add the name with that port: `mybox.tailnet-name.ts.net:8443`. The board rejects any other `Host` header. Do not expose the port on a public network.
+
 ## Harness
 
 The harness is the coding agent that works on a ticket. `[factory] harness` sets it for all projects, and `[projects.X] harness` sets it for one project.

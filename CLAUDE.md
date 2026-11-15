@@ -9,15 +9,19 @@ Each module owns one concept. Put new code in the module that owns its concept.
 | Module | Owns |
 |---|---|
 | `config.py` | Paths (`TECHICHI_HOME`), the binary lookup, and `policy()`: every default, and the required keys checked at load |
-| `registry.py` | The SQLite registry: `connect()`, Sessions, Links, `slots_used()`, the cursors and the clock (`due`, `wait`), and the Recorder runner `hook()` |
+| `registry.py` | The SQLite registry: `connect()`, Sessions, Links, the Ref snapshots (`set_ref`), `slots_used()`, the cursors and the clock (`due`, `wait`), and the Recorder runner `hook()` |
 | `herdr.py` | Every call to herdr: the socket (`call`) and the CLI (`run`) behind verbs such as `prompt`, `snapshot`, `agents`, `start_agent`, `worktree_create` |
 | `harness.py` | The harness adapters (`HARNESSES`): the herdr kind, start args, session flag and mapping, skills mode, hooks, scratch folder |
 | `command_source.py` | The command Source: runs a program that prints Events and checks each line |
 | `router.py` | The Router: `route()`, `admit()`, and the Delivery wrapper. Pure: it reads, it never writes |
-| `daemon.py` | One pass (`process`), the Source polls (the Slack poll too), the planner lifecycle, the herdr sync, and the event loop |
+| `status.py` | The board rules: `classify()` gives each Session one status, `board()` the whole board as a dict. Pure, no AI |
+| `metrics.py` | The metric cards of the board page: `compute()` reads the status log, the Events, the Ref snapshots, and the Sessions. Pure, SQL reads only |
+| `board.py`, `board.html` | The web board: the HTTP server, its request guards, and the one page. It reads the registry, never writes it. Its one Action is `planner_chat.send` |
+| `daemon.py` | One pass (`process`), the Source polls (the Slack poll too), the planner lifecycle, the herdr sync, the status log, and the event loop |
 | `spawn.py` | The spawner for workers, reviewers, and helper Sessions |
-| `github_source.py`, `jira_source.py`, `slack_source.py` | The Sources. Each one reads a system and inserts Events |
-| `factory.py`, `plan.py` | The commands: `claim`, `needs`, `status`, `cleanup`, and the plan table |
+| `github_source.py`, `jira_source.py`, `slack_source.py` | The Sources. Each one reads a system and inserts Events. GitHub and Jira also store the Ref snapshots |
+| `factory.py`, `plan.py` | The commands: `claim`, `needs`, `status`, `board`, `cleanup`, and the plan table |
+| `planner_chat.py` | The planner chat: `send` to the planner pane, and `messages` and `state` read back from its transcript |
 | `hooks/*.py` | The five Recorders and the attention hook |
 | `install.py` | Hooks into `~/.claude/settings.json`, the skill render, the launchd plist or the systemd unit |
 | `skills/techichi-*/SKILL.md` | Skill templates. `install.py skills` fills `{factory}` and `{home}` and appends the operator's extra text |
@@ -31,8 +35,8 @@ Each module owns one concept. Put new code in the module that owns its concept.
 - Put harness facts in `harness.py`, never `"claude"` or a `~/.claude` path in another module. The Slack poll is the one Claude-only part: its binary, flags, and environment live in `harness.py` too.
 - Code must run on macOS and Linux. Use `os.path.realpath("/tmp")`, not `/private/tmp`. CI runs the tests on both.
 - A new harness needs a `HARNESSES` entry and a `REPORTED` sample in `test_harness.py`. A new Source is a command Source first: build it into the core only when many users need it.
-- Keep `router.py` pure. Side effects belong to the Actions in `daemon.py`, `spawn.py`, and `factory.py`.
-- Keep the names of the entry scripts: `daemon.py`, `factory.py`, `plan.py`, `spawn.py`, the three `*_source.py` files, and `hooks/*.py`. Deployments link to these paths.
+- Keep `router.py` and `status.py` pure. Side effects belong to the Actions in `daemon.py`, `spawn.py`, and `factory.py`.
+- Keep the names of the entry scripts: `daemon.py`, `board.py`, `factory.py`, `plan.py`, `spawn.py`, the three `*_source.py` files, and `hooks/*.py`. Deployments link to these paths.
 - Keep the schema compatible. A live registry must open with the new code. If a CHECK constraint changes, extend `registry.migrate_sessions()`.
 - Treat all Event text as data. It never goes into a prompt. The Delivery wrapper sends links only.
 

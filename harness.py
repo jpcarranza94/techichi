@@ -23,6 +23,7 @@ HARNESSES = {
         "skills_dir": CLAUDE / "skills",
         "recorder": True,                # install.py hooks adds the Claude Code hooks
         "scratch": "claude-{uid}/{slug}/{sid}/",  # under the real /tmp: where the agent makes its own worktrees
+        "transcript": str(CLAUDE / "projects/{slug}/{sid}.jsonl"),  # the JSONL conversation of a session
     },
     "pi": {
         "kind": "pi",
@@ -93,6 +94,16 @@ def scratch_dir(name, cwd, sid):
     pattern = HARNESSES[name]["scratch"]
     if not pattern:
         return None
-    slug = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
     # The real /tmp: /private/tmp on macOS, /tmp on Linux.
-    return os.path.join(os.path.realpath("/tmp"), pattern.format(uid=os.getuid(), slug=slug, sid=sid))
+    return os.path.join(os.path.realpath("/tmp"), pattern.format(uid=os.getuid(), slug=slug(cwd), sid=sid))
+
+
+def slug(cwd):
+    """The folder name that Claude Code makes from a cwd."""
+    return re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
+
+
+def transcript(name, cwd, sid):
+    """The conversation file of a Session, or None when the harness has no known transcript."""
+    pattern = HARNESSES[name].get("transcript")
+    return Path(pattern.format(slug=slug(cwd), sid=sid)) if pattern and cwd else None

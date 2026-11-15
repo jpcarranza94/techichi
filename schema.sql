@@ -64,3 +64,21 @@ CREATE TABLE IF NOT EXISTS needs (
   text       TEXT NOT NULL,
   at         TEXT NOT NULL
 );
+
+-- The last state of a Ref that a Source read: a compact JSON snapshot. The board reads it. Sources write it.
+CREATE TABLE IF NOT EXISTS refs (
+  kind       TEXT NOT NULL,                            -- pr | ticket
+  ref        TEXT NOT NULL,                            -- PR URL | APP-1326
+  state      TEXT NOT NULL,                            -- JSON, see DESIGN.md section "Board"
+  updated_at TEXT,
+  PRIMARY KEY (kind, ref)
+);
+
+-- The board status of each Session over time. Append only. The daemon writes a row when the status changes.
+CREATE TABLE IF NOT EXISTS status_log (
+  session_id TEXT NOT NULL,
+  grp        TEXT NOT NULL,                            -- a board group, or ENDED
+  status     TEXT NOT NULL,
+  at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS status_log_session ON status_log(session_id);

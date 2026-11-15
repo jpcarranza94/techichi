@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -124,6 +125,32 @@ def updates(con, pol, last, start):
     return out
 
 
+def snapshots(con, pol):
+    """Store the state of each ticket on the board: a ticket Link of a Session that is not ended, or an admitted
+    ticket that waits. One search for all of them, only for keys of policy projects: a hook can record a bogus key.
+    The blockers are the "is blocked by" links, open or done."""
+    keys = sorted(r[0] for r in con.execute(
+        "SELECT l.ref FROM links l JOIN sessions s USING (session_id) WHERE l.kind = 'ticket' AND s.state != 'ended' "
+        "UNION SELECT ref FROM events WHERE kind = 'ticket' AND status = 'queued' AND json_extract(payload, '$.admitted')")
+        if re.fullmatch(r"[A-Z][A-Z0-9_]*-\d+", r[0]) and r[0].split("-")[0] in pol["projects"])
+    if not keys:
+        return 0
+    # ponytail: one deleted key fails the whole search, and every snapshot goes stale. If that happens, drop the
+    # key that Jira names in the error and search again.
+    issues = search(pol, f"key in ({', '.join(keys)})", "summary,status,issuelinks")
+    for i in issues:
+        f = i["fields"]
+        registry.set_ref(con, "ticket", i["key"], {
+            "summary": f.get("summary") or "", "status": f["status"]["name"],
+            "statusCategory": f["status"]["statusCategory"]["key"],
+            "blockers": [{"key": b["key"], "summary": b["fields"].get("summary") or "",
+                          "status": b["fields"]["status"]["name"],
+                          "done": b["fields"]["status"]["statusCategory"]["key"] == "done"}
+                         for x in f.get("issuelinks") or []
+                         if x["type"]["inward"] == "is blocked by" and (b := x.get("inwardIssue"))]})
+    return len(issues)
+
+
 def poll(con, pol, dry_run=False):
     """Insert Events for admissions and updates. Return the count. dry_run prints and writes nothing."""
     if not dry_run and not registry.due(con, "jira:next"):
@@ -143,6 +170,10 @@ def poll(con, pol, dry_run=False):
                              (ev["id"], ev["kind"], ev["ref"], json.dumps(ev["payload"]))).rowcount
     if not dry_run:
         set_cursor(con, "jira", iso(start))  # first run: no update Events, start from now
+        try:  # a failed snapshot search must not stop the Events
+            snapshots(con, pol)
+        except Exception as e:
+            print("jira snapshots failed:", str(e)[:300], file=sys.stderr, flush=True)
     return n
 
 

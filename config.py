@@ -35,6 +35,10 @@ def _defaults():
         "hold": {"notify_after_minutes": 60},
         "spawn": {"max_active": 0, "gap_seconds": 30},  # 0: nothing spawns until the policy sets a cap
         "cleanup": {"done_statuses": ["Done"]},
+        # The board: review logins that are not a reviewer, and base branches that are not a stack.
+        # host and port: where board.py listens. hosts: the Host headers it accepts, default loopback on that port.
+        "board": {"bots": ["coderabbitai", "github-actions", "copilot-pull-request-reviewer"],
+                  "trunks": ["main", "master", "dev", "develop"], "host": "127.0.0.1", "port": 8377},
     }
 
 
@@ -53,6 +57,8 @@ def complete(raw, where="policy"):
         pol[table] = {**values, **pol.get(table, {})}
     if "slack" in pol:
         pol["slack"] = {**SLACK, **pol["slack"]}
+    b = pol["board"]
+    b.setdefault("hosts", [f"127.0.0.1:{b['port']}", f"localhost:{b['port']}"])
     f = pol["factory"]
     for k in ("worktrees", "helper_cwd", "relay_cwd"):
         f[k] = Path(os.path.expanduser(f[k]))

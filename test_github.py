@@ -256,4 +256,32 @@ listed, reads = [], []
 with contextlib.redirect_stderr(io.StringIO()) as err:
     g.poll(c, pol, list_fn=lambda p: listed.append(p) or ({}, []), view=lambda u: 1 / 0 if u == A + "1" else view(u))
 assert listed and sorted(reads) == [A + "2", A + "3", A + "6"] and f"github checks: {A}1" in err.getvalue()
+
+# Snapshots: each read stores the compact state of the PR, a closed one too, for the pr and the review Links.
+snap = {r["ref"]: json.loads(r["state"]) for r in c.execute("SELECT ref, state FROM refs WHERE kind = 'pr'")}
+assert sorted(snap) == [A + "1", A + "2", A + "3", A + "6"] and snap[A + "3"]["state"] == "CLOSED"
+assert snap[A + "1"]["failedCheck"] == "test" and snap[A + "1"]["mergeable"] == "CONFLICTING"
+PRS[A + "2"] = dict(PRS[A + "2"], number=2, title="Add export", isDraft=False, reviewDecision="APPROVED",
+                    reviewRequests=[{"login": "bob"}, {"name": "core"}], updatedAt="2026-10-28T16:05:00Z",
+                    author={"login": "alice", "is_bot": False},
+                    statusCheckRollup=[run("test", "SUCCESS"), {"__typename": "CheckRun", "name": "e2e", "status": "IN_PROGRESS"}],
+                    latestReviews=[{"author": {"login": "bob"}, "state": "APPROVED", "submittedAt": "2026-10-28T16:01:00Z",
+                                    "body": "long text"},
+                                   {"author": {"login": ME}, "state": "COMMENTED", "submittedAt": "2026-10-28T16:02:00Z"}],
+                    commits=[{"oid": "1", "committedDate": "2026-10-28T15:00:00Z", "messageBody": "x"},
+                             {"oid": "2", "committedDate": "2026-10-28T16:00:00Z", "messageBody": "y"}])
+c.execute("DELETE FROM cursors WHERE source = 'github:checks:next'")
+g.checks(c, pol, view=view, login=login)
+assert json.loads(c.execute("SELECT state FROM refs WHERE ref = ?", (A + "2",)).fetchone()[0]) == {
+    "number": 2, "title": "Add export", "state": "OPEN", "isDraft": False, "reviewDecision": "APPROVED",
+    "reviewRequests": ["bob", "core"],
+    "latestReviews": [{"login": "bob", "state": "APPROVED", "submittedAt": "2026-10-28T16:01:00Z", "self": False},
+                      {"login": ME, "state": "COMMENTED", "submittedAt": "2026-10-28T16:02:00Z", "self": True}],
+    "failedCheck": None, "pendingChecks": True, "mergeable": "UNKNOWN", "baseRefName": "dev", "author": "alice",
+    "updatedAt": "2026-10-28T16:05:00Z", "mergedAt": None, "lastCommitAt": "2026-10-28T16:00:00Z"}
+# The dry run stores no snapshot.
+c.execute("DELETE FROM refs")
+with contextlib.redirect_stdout(io.StringIO()):
+    g.checks(c, pol, dry_run=True, view=view, login=login)
+assert c.execute("SELECT count(*) FROM refs").fetchone()[0] == 0
 print("ok")

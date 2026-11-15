@@ -125,6 +125,13 @@ def link(con, kind, ref, sid, created_by):
                 (kind, ref, sid, created_by))
 
 
+def set_ref(con, kind, ref, state):
+    """Store the snapshot of a Ref that a Source read. The board reads it."""
+    con.execute("INSERT INTO refs (kind, ref, state, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (kind, ref) "
+                "DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at",
+                (kind, ref, json.dumps(state), now()))
+
+
 def slots_used(con):
     """Spawned workers and reviewers that hold a slot: a spawner ticket or review Link, and a Session that is
     registered or live."""

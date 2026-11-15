@@ -7,6 +7,7 @@
   install.py skills   render the skills into <config>/skills. Link them for a harness that links skills.
   install.py service  write the launchd plist (macOS) or the systemd user unit (Linux), print how to start it
   install.py plist    the same as service, kept for old notes
+  install.py board    write the service file of the web board (board.py), print how to start it. Not part of "all".
 
 Run `install.py skills` again after each core update.
 """
@@ -97,18 +98,19 @@ def fill(template):
     return text
 
 
-def service(platform=sys.platform):
-    """The launchd plist on macOS, the systemd user unit on Linux. Prints the commands that start it."""
+def service(platform=sys.platform, name="techichi"):
+    """The launchd plist on macOS, the systemd user unit on Linux. Prints the commands that start it.
+    name: techichi (the daemon) or techichi-board (the web board). Each has its own template."""
     if platform == "darwin":
-        out = config.HOME / "techichi.plist"
-        out.write_text(fill("launchd/techichi.plist.template"))
+        out = config.HOME / f"{name}.plist"
+        out.write_text(fill(f"launchd/{name}.plist.template"))
         print(f"wrote:   {out}\nStart it:\n  cp {out} ~/Library/LaunchAgents/\n"
-              "  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/techichi.plist")
+              f"  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/{name}.plist")
         return out
-    out = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "systemd/user/techichi.service"
+    out = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / f"systemd/user/{name}.service"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(fill("systemd/techichi.service.template"))
-    print(f"wrote:   {out}\nStart it:\n  systemctl --user daemon-reload\n  systemctl --user enable --now techichi\n"
+    out.write_text(fill(f"systemd/{name}.service.template"))
+    print(f"wrote:   {out}\nStart it:\n  systemctl --user daemon-reload\n  systemctl --user enable --now {name}\n"
           "On a machine with no login session, let the service run without one:\n  loginctl enable-linger $USER")
     return out
 
@@ -116,7 +118,7 @@ def service(platform=sys.platform):
 if __name__ == "__main__":
     assert sys.version_info >= (3, 11), "run with python 3.11 or later"
     cmd = sys.argv[1] if len(sys.argv) > 1 else "all"
-    if cmd not in ("all", "hooks", "skills", "service", "plist"):
+    if cmd not in ("all", "hooks", "skills", "service", "plist", "board"):
         sys.exit(__doc__)
     if not config.POLICY.exists():
         sys.exit(f"no policy at {config.POLICY}. Copy policy.example.toml there first.")
@@ -124,6 +126,8 @@ if __name__ == "__main__":
         config.policy()  # a bad policy stops the install here, with one clear line
     except config.PolicyError as e:
         sys.exit(str(e))
+    if cmd == "board":
+        service(name="techichi-board")
     for name, step in (("hooks", hooks), ("skills", skills), ("service", service)):
         if cmd in ("all", name) or (cmd == "plist" and name == "service"):
             step()

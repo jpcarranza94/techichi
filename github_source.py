@@ -107,11 +107,35 @@ def head_branch(note, get=None):
 
 
 def pr_view(url):
-    """One read of a PR: its state, head commit, base branch, mergeability, and checks."""
+    """One read of a PR: its state, head commit, base branch, mergeability, checks, and what the board shows."""
     out = subprocess.run([config.GH, "pr", "view", url, "--json",
-                          "state,headRefOid,baseRefName,mergeable,statusCheckRollup,author"],
+                          "state,headRefOid,baseRefName,mergeable,statusCheckRollup,author,number,title,isDraft,"
+                          "reviewDecision,reviewRequests,latestReviews,updatedAt,mergedAt,commits"],
                          capture_output=True, text=True, timeout=30, check=True).stdout
     return json.loads(out)
+
+
+def failed(c):
+    return c.get("conclusion") in FAILED or c.get("state") in FAILED
+
+
+def snapshot(pr, login=me):
+    """The compact state of a PR for the board: no check list and no commit list. `self` marks the operator's review."""
+    rollup = pr.get("statusCheckRollup") or []
+    bad = [c.get("name") or c.get("context") for c in rollup if failed(c)]
+    return {"number": pr.get("number"), "title": pr.get("title"), "state": pr.get("state"),
+            "isDraft": bool(pr.get("isDraft")), "reviewDecision": pr.get("reviewDecision") or "",
+            "reviewRequests": [r.get("login") or r.get("name") or "?" for r in pr.get("reviewRequests") or []],
+            "latestReviews": [{"login": a, "state": r.get("state"), "submittedAt": r.get("submittedAt"), "self": a == login()}
+                              for r in pr.get("latestReviews") or [] if (a := (r.get("author") or {}).get("login"))],
+            "failedCheck": bad[0] if bad else None,
+            # A CheckRun runs until its status is COMPLETED. A StatusContext has a state only.
+            "pendingChecks": any(c.get("status") not in (None, "COMPLETED") or c.get("state") in ("PENDING", "EXPECTED")
+                                 for c in rollup),
+            "mergeable": pr.get("mergeable"), "baseRefName": pr.get("baseRefName"),
+            "author": (pr.get("author") or {}).get("login"), "updatedAt": pr.get("updatedAt"),
+            "mergedAt": pr.get("mergedAt"),
+            "lastCommitAt": max((c.get("committedDate") or "" for c in pr.get("commits") or []), default="") or None}
 
 
 def insert(con, evs, dry_run):
@@ -125,10 +149,11 @@ def insert(con, evs, dry_run):
                for ev in evs)
 
 
-def checks(con, pol, dry_run=False, view=pr_view):
+def checks(con, pol, dry_run=False, view=pr_view, login=me):
     """Failed checks and a merge conflict on the head commit of each open PR with a pr Link of a Session that is not
     ended. A pr Link already routes these Events, so they carry no head branch.
-    For a review Link, only a new head commit: GitHub sends no notification for a push."""
+    For a review Link, only a new head commit: GitHub sends no notification for a push.
+    Each PR read also stores the snapshot of the PR for the board, an open, merged, or closed one."""
     if not dry_run:
         if not registry.due(con, "github:checks:next"):
             return 0
@@ -150,6 +175,11 @@ def checks(con, pol, dry_run=False, view=pr_view):
         except Exception as e:  # one PR that fails to read must not stop the others
             print(f"github checks: {ref}: {str(e)[:200]}", file=sys.stderr, flush=True)
             continue
+        if not dry_run:
+            try:  # a bad snapshot must not stop the Events
+                registry.set_ref(con, "pr", ref, snapshot(pr, login))
+            except Exception as e:
+                print(f"github snapshot: {ref}: {str(e)[:200]}", file=sys.stderr, flush=True)
         if pr["state"] != "OPEN":
             continue
         sha = pr["headRefOid"]
@@ -163,7 +193,7 @@ def checks(con, pol, dry_run=False, view=pr_view):
                 set_cursor(con, f"github:head:{ref}", sha)
             continue
         for c in pr.get("statusCheckRollup") or []:
-            if c.get("conclusion") in FAILED or c.get("state") in FAILED:
+            if failed(c):
                 name = c.get("name") or c.get("context")
                 evs.append(ev(ref, f"gh:check:{sha}:{name}", f"check failed: {name}", "ci",
                               c.get("completedAt") or now(), c.get("detailsUrl") or c.get("targetUrl")))
@@ -182,7 +212,7 @@ def poll(con, pol, dry_run=False, since=None, fetch=gh_all, login=me, list_fn=No
             set_cursor(con, "github", now())  # first run: start from now, never flood live sessions
         return 0
     try:  # on its own timer, so it runs when the notifications are not due
-        n = checks(con, pol, dry_run, view)
+        n = checks(con, pol, dry_run, view, login)
     except Exception as e:  # a failed check read must not stop the notifications
         n = 0
         print("github checks failed:", str(e)[:300], file=sys.stderr, flush=True)

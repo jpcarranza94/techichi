@@ -36,6 +36,17 @@ assert "launchctl bootstrap" in o.getvalue() and "systemctl --user enable --now 
 if sys.platform.startswith("linux") and shutil.which("systemd-analyze"):
     r = subprocess.run(["systemd-analyze", "--user", "verify", str(unit)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+# The web board: its own label, script, and log. The daemon files stay as they are.
+with contextlib.redirect_stdout(io.StringIO()) as o:
+    bplist = install.service("darwin", "techichi-board")
+    bunit = install.service("linux", "techichi-board")
+assert bplist == config.HOME / "techichi-board.plist" and bunit == xdg / "systemd/user/techichi-board.service"
+for f in (bplist, bunit):
+    text = f.read_text()
+    assert "{" not in text and f"{CORE}/board.py" in text and "daemon.py" not in text, f
+assert "<string>techichi-board</string>" in bplist.read_text() and f"{CORE}/daemon.py" in plist.read_text()
+assert "launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/techichi-board.plist" in o.getvalue()
+assert "systemctl --user enable --now techichi-board" in o.getvalue()
 
 # --- An entry that names a hook through a link to the hooks folder counts as present. ---
 link = Path(tempfile.mkdtemp()) / "hooks"

@@ -114,6 +114,33 @@ for want in ("Sessions: 3 not ended", "web-690-hand", "ticket WEB-690", "PR 577"
     assert want in text, (want, text)
 assert "stale" not in text and "Relay" not in text  # an ended Session, no relay
 
+# --- board: the text has no color off a terminal. --json prints the dict of status.board. ---
+import contextlib  # noqa: E402
+import io  # noqa: E402
+import json  # noqa: E402
+import status  # noqa: E402
+b = status.board(con, pol, f.agent_names())
+text = f.board_text(b)
+assert "\033[" not in text and "\033[" in f.board_text(b, tty=True)
+lines = text.splitlines()
+assert lines[0].startswith("FACTORY ") and "slots 0/" in lines[0] and "github " in lines[0] and "jira - !" in lines[0]
+you = lines.index(next(x for x in lines if x.startswith("YOU  1 ")))
+assert lines[you + 1].split()[:2] == ["web-690-hand", "WEB-690"] and "needs you" in lines[you + 1]
+agent = lines.index(next(x for x in lines if x.startswith("AGENT  1 ")))
+assert lines[agent + 1].split()[:3] == ["other", "APP-7", "working"]
+assert "WAITS FOR OTHERS  0  BLOCKED  0" in text and "CHECK  0" not in text  # empty groups on one line, CHECK not
+assert "WAITING TO START  1" in text and " WEB-690   " in text and "UNROUTED  inbox 1" in text
+assert f.chain_text(b) == 'No open "is blocked by" link between the tickets on the board.'
+b["chain"] = [{"key": "APP-1", "title": "Add export", "state": "fix needed", "children": [
+    {"key": "APP-2", "title": "Use export", "state": "blocked", "children": []},
+    {"key": "APP-3", "title": "Docs", "state": "blocked", "children": [
+        {"key": "APP-5", "title": "Report", "state": "waiting", "children": []}]}]}]
+assert [x[:x.index("APP-") + 5] for x in f.chain_text(b).splitlines()] == ["APP-1", "├─ APP-2", "└─ APP-3", "   └─ APP-5"]
+with contextlib.redirect_stdout(io.StringIO()) as out:
+    f.main(["board", "--json"])
+got = json.loads(out.getvalue())
+assert [g["name"] for g in got["groups"]] == status.GROUPS and {"at", "slots", "chain", "planner"} <= set(got)
+
 # --- jira_done: the status name decides, not the category. "Ready for Deploy" is in category done. ---
 import jira_source
 real_get = jira_source.get

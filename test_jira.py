@@ -44,6 +44,18 @@ UPDATES = [{"key": "APP-11", "fields": {"comment": {"comments": [
         {"id": "800", "created": "2026-10-20T10:00:00.000-0400", "author": {"displayName": "Old"}}]}}}]
 NEWEST = {"comments": [{"id": "802", "created": "2026-10-28T10:10:00.000-0400", "author": {"displayName": "New"}},
                        {"id": "801", "created": "2026-10-21T10:00:00.000-0400", "author": {"displayName": "Old"}}]}
+# The snapshot search: APP-11 is blocked by WEB-5 (open) and APP-9 (done). A "blocks" link is no blocker.
+status = lambda name, cat: {"name": name, "statusCategory": {"key": cat}}
+SNAP = [{"key": "APP-11", "fields": {"summary": "Linked one", "status": status("In Progress", "indeterminate"), "issuelinks": [
+    {"type": {"inward": "is blocked by", "outward": "blocks"},
+     "inwardIssue": {"key": "WEB-5", "fields": {"summary": "API", "status": status("To Do", "new")}}},
+    {"type": {"inward": "is blocked by", "outward": "blocks"},
+     "inwardIssue": {"key": "APP-9", "fields": {"summary": "Old", "status": status("Done", "done")}}},
+    {"type": {"inward": "is blocked by", "outward": "blocks"},
+     "outwardIssue": {"key": "APP-12", "fields": {"summary": "Next", "status": status("To Do", "new")}}},
+    {"type": {"inward": "is cloned by", "outward": "clones"},
+     "inwardIssue": {"key": "APP-13", "fields": {"summary": "Clone", "status": status("To Do", "new")}}}]}},
+    {"key": "APP-10", "fields": {"summary": "Add CSV export", "status": status("To Do", "new")}}]
 seen, fail = [], {"code": None}
 
 
@@ -65,6 +77,8 @@ def fake_urlopen(req, timeout=None):
         body = {"issues": ADMIT["APP"]}
     elif q["jql"].startswith("project = WEB"):
         body = {"issues": ADMIT["WEB"]}
+    elif q["jql"].startswith("key in"):
+        body = {"issues": SNAP}
     else:
         body = {"issues": UPDATES}
     return io.BytesIO(json.dumps(body).encode())
@@ -87,6 +101,14 @@ assert (kind, ref) == ("ticket", "APP-10")
 assert p == {"what": "ready in the sprint", "actor": "jira", "at": "2026-10-28T09:00:00.000-0400",
              "url": f"{SITE}/browse/APP-10", "self": False, "admitted": True, "slug": "add-csv-export-to-the"}
 assert j.cursor(con, "jira") and j.cursor(con, "jira:next") > j.now()
+# Snapshots: one search for the linked tickets and the waiting admitted one, policy projects only.
+q = [q for _, q in seen if q.get("jql", "").startswith("key in")]
+assert [x["jql"] for x in q] == ["key in (APP-10, APP-11, WEB-5)"] and q[0]["fields"] == "summary,status,issuelinks"
+snap = {r["ref"]: json.loads(r["state"]) for r in con.execute("SELECT ref, state FROM refs WHERE kind = 'ticket'")}
+assert snap["APP-11"] == {"summary": "Linked one", "status": "In Progress", "statusCategory": "indeterminate", "blockers": [
+    {"key": "WEB-5", "summary": "API", "status": "To Do", "done": False},
+    {"key": "APP-9", "summary": "Old", "status": "Done", "done": True}]}
+assert snap["APP-10"]["blockers"] == [] and set(snap) == {"APP-10", "APP-11"}
 
 # Backoff: the next poll inside the interval makes no request.
 n = len(seen)
@@ -116,9 +138,19 @@ assert "jira:comment:802" in ev and "jira:comment:800" not in ev  # the newest p
 before = list(con.execute("SELECT * FROM cursors")), con.execute("SELECT count(*) FROM events").fetchone()[0]
 con.execute("UPDATE cursors SET value = '2026-10-28T13:55:00Z' WHERE source = 'jira'")
 before = list(map(tuple, con.execute("SELECT * FROM cursors"))), before[1]
+n_seen = len(seen)
 with contextlib.redirect_stdout(io.StringIO()):
     assert j.poll(con, pol, dry_run=True) == 6
 assert (list(map(tuple, con.execute("SELECT * FROM cursors"))), con.execute("SELECT count(*) FROM events").fetchone()[0]) == before
+
+# The dry run makes no snapshot search. A failed snapshot search does not stop the Events.
+assert not [1 for _, q in seen[n_seen:] if q.get("jql", "").startswith("key in")]
+SNAP.append({"key": "WEB-5", "fields": {}})
+con.execute("DELETE FROM cursors WHERE source = 'jira:next'")
+with contextlib.redirect_stderr(io.StringIO()) as err:
+    j.poll(con, pol)
+assert "jira snapshots failed" in err.getvalue() and j.cursor(con, "jira") != "2026-10-28T13:55:00Z"  # the poll ended
+SNAP.pop()
 
 # No error text contains the token, also when the server echoes it.
 fail["code"] = 401

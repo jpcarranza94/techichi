@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The web board. `install.py board` fills in the paths. See DESIGN.md section "Web board".
+  Install:
+    cp techichi-board.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/techichi-board.plist
+  Remove:
+    launchctl bootout gui/$(id -u)/techichi-board
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>techichi-board</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{python}</string>
+        <string>{core}/board.py</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TECHICHI_HOME</key>
+        <string>{home}</string>
+        <key>PATH</key>
+        <string>{path}</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>{home}</string>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>{home}/board.log</string>
+    <key>StandardErrorPath</key>
+    <string>{home}/board.log</string>
+</dict>
+</plist>

@@ -1,0 +1,780 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Factory</title>
+<!-- The web board of techichi. See DESIGN.md "Web board". All text from the API is data: it goes in with
+     textContent, or through esc() in the planner formatter. Only https:// URLs become links. -->
+<style>
+:root {
+  --bg: #f6f6f4; --panel: #ffffff; --fg: #1d1e20; --muted: #676b72; --faint: #9a9ea5; --line: #e2e2de;
+  --hover: #f0f0ec; --focus: #2563eb;
+  --you: #c23a2b; --you-bg: #fcf0ee; --agent: #0b7285; --waits: #a35c00; --blocked: #7048c8; --neutral: #676b72;
+  --ok: #2f7d4f; --warn: #a35c00; --bad: #c23a2b; --viz: #3a6db3; --cell0: #ecece8;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131417; --panel: #1b1c20; --fg: #e5e5e2; --muted: #9a9fa7; --faint: #6c7078; --line: #2d3036;
+    --hover: #23252a; --focus: #7aa7ff;
+    --you: #ff7b6b; --you-bg: #2a1916; --agent: #4cc3d9; --waits: #efb041; --blocked: #b49bff; --neutral: #9a9fa7;
+    --ok: #62c48b; --warn: #efb041; --bad: #ff7b6b; --viz: #7aa7e6; --cell0: #25272c;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto,
+  "Helvetica Neue", Arial, sans-serif; display: grid; grid-template-columns: minmax(0, 1fr) 400px; min-height: 100vh;
+}
+body.pclosed { grid-template-columns: minmax(0, 1fr); }
+body.pclosed #planner { display: none; }
+a { color: inherit; text-decoration-color: var(--faint); text-underline-offset: 2px; }
+a:hover { text-decoration-color: currentColor; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+button {
+  font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  padding: 4px 10px; cursor: pointer;
+}
+button:hover { background: var(--hover); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.mono { font-family: var(--mono); font-size: .92em; }
+.muted { color: var(--muted); }
+[hidden] { display: none !important; }
+
+main { min-width: 0; padding: 0 20px 40px; container-type: inline-size; }
+header.top { padding: 14px 0 8px; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
+header h1 { font-size: 16px; margin: 0; letter-spacing: .02em; }
+.chip { white-space: nowrap; }
+.chip b { font-weight: 600; }
+.sources { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); }
+.src.stale { color: var(--warn); }
+.src.stale::after { content: " stale"; font-size: .85em; }
+.offline { color: var(--bad); font-weight: 600; }
+#plannerToggle { margin-left: auto; }
+
+nav[role=tablist] { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+nav [role=tab] {
+  border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 6px 12px;
+  color: var(--muted); margin-bottom: -1px;
+}
+nav [role=tab][aria-selected=true] { color: var(--fg); border-bottom-color: var(--fg); font-weight: 600; }
+
+/* --- board --- */
+.group { margin: 0 0 14px; --acc: var(--neutral); }
+.g-you { --acc: var(--you); } .g-agent { --acc: var(--agent); } .g-waits { --acc: var(--waits); }
+.g-blocked { --acc: var(--blocked); }
+.group h2 {
+  font-size: 12px; letter-spacing: .06em; margin: 0 0 4px; color: var(--acc); font-weight: 700;
+  display: flex; gap: 8px; align-items: baseline;
+}
+.group h2 .n { color: var(--muted); font-weight: 500; }
+.g-you { background: var(--you-bg); border-left: 4px solid var(--you); border-radius: 4px; padding: 10px 12px 6px; }
+.g-you h2 { font-size: 15px; }
+.g-you .row { font-size: 15px; }
+.g-you .name { font-weight: 650; }
+.g-you.empty { background: none; border-left-color: var(--line); padding: 4px 12px; }
+.g-you.empty h2 { font-size: 12px; color: var(--muted); }
+.rows { list-style: none; margin: 0; padding: 0; }
+.row {
+  display: grid; gap: 1px 10px; padding: 6px 0; border-top: 1px solid var(--line);
+  grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "name key age" "title title title" "st detail detail";
+}
+.rows .row:first-child { border-top: 0; }
+.g-you .row { border-top-color: color-mix(in srgb, var(--you) 18%, transparent); }
+.row > * { min-width: 0; overflow-wrap: anywhere; }
+.name { grid-area: name; font-weight: 550; }
+.key { grid-area: key; font-family: var(--mono); font-size: .9em; white-space: nowrap; }
+.title { grid-area: title; color: var(--muted); }
+.st { grid-area: st; color: var(--acc); font-weight: 600; white-space: nowrap; }
+.detail { grid-area: detail; }
+.detail .prs { margin-left: 6px; }
+.detail .prs a { font-family: var(--mono); font-size: .9em; margin-right: 6px; }
+.age { grid-area: age; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+@container (min-width: 760px) {
+  .row {
+    grid-template-columns: 10.5rem 6.5rem minmax(0, 1.1fr) 7.5rem minmax(0, 1.6fr) 2.8rem;
+    grid-template-areas: "name key title st detail age"; align-items: baseline; padding: 4px 0;
+  }
+  .title { color: var(--fg); }
+}
+.emptyline { color: var(--faint); font-size: 12px; letter-spacing: .04em; margin: 4px 0 18px; }
+.wait .row { grid-template-areas: "key title title" "st detail detail"; grid-template-columns: auto minmax(0, 1fr) auto; }
+@container (min-width: 760px) {
+  .wait .row { grid-template-columns: 6.5rem minmax(0, 1.2fr) 10rem minmax(0, 1.5fr); grid-template-areas: "key title st detail"; }
+}
+.wait .st { color: var(--muted); font-weight: 500; white-space: normal; }
+.outside { color: var(--muted); font-size: 13px; margin-top: 18px; }
+.outside b { font-size: 12px; letter-spacing: .06em; color: var(--faint); margin-right: 6px; }
+
+/* --- chain --- */
+.tree, .tree ul { list-style: none; margin: 0; padding: 0; }
+.tree > li { margin-bottom: 10px; }
+.tree ul { margin-left: 7px; padding-left: 18px; }
+.tree li { position: relative; }
+.tree ul > li::before {
+  content: ""; position: absolute; left: -18px; top: 0; width: 13px; height: 12px;
+  border-left: 1px solid var(--faint); border-bottom: 1px solid var(--faint); border-bottom-left-radius: 4px;
+}
+.tree ul > li::after { content: ""; position: absolute; left: -18px; top: 12px; bottom: 0; border-left: 1px solid var(--faint); }
+.tree ul > li:last-child::after { display: none; }
+.node { display: flex; flex-wrap: wrap; gap: 0 10px; align-items: baseline; padding: 2px 0; }
+.node .k { font-family: var(--mono); font-size: .9em; font-weight: 600; }
+.node .k::before {
+  content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--acc, var(--faint));
+  margin-right: 6px; vertical-align: 1px;
+}
+.node .s { color: var(--muted); }
+
+/* --- metrics --- */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin-bottom: 12px; }
+.seg button { border: 0; border-radius: 0; padding: 4px 12px; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed=true] { background: var(--fg); color: var(--bg); }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+.card.wide { grid-column: 1 / -1; }
+.card h3 { font-size: 13px; margin: 0 0 8px; font-weight: 600; }
+.card .note { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+.card svg { display: block; width: 100%; height: auto; overflow: visible; }
+.card svg text { fill: var(--muted); font-size: 10px; font-family: inherit; }
+.stats { display: flex; flex-wrap: wrap; gap: 10px 24px; }
+.stat .v { font-size: 28px; font-weight: 650; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stat .v small { font-size: 13px; color: var(--muted); font-weight: 500; margin-left: 3px; }
+.stat .l { color: var(--muted); font-size: 12px; }
+.hbars { display: grid; grid-template-columns: minmax(0, max-content) minmax(40px, 1fr) auto; gap: 4px 8px; align-items: center; font-size: 12px; }
+.hbars .lb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 12rem; }
+.hbars .bar { display: block; height: 10px; border-radius: 2px; background: var(--viz); min-width: 1px; }
+.hbars .vl { font-variant-numeric: tabular-nums; color: var(--muted); text-align: right; }
+
+/* --- planner --- */
+#planner {
+  position: sticky; top: 0; height: 100vh; height: 100dvh; display: flex; flex-direction: column;
+  border-left: 1px solid var(--line); background: var(--panel); min-width: 0;
+}
+.ph { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.ph h2 { font-size: 14px; margin: 0; }
+.ph #pclose { margin-left: auto; }
+.pst { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
+.pst::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.pst.working::before { background: var(--agent); }
+.pst.idle::before, .pst.done::before { background: var(--ok); }
+.pst.blocked::before { background: var(--you); }
+.msgs { flex: 1; overflow-y: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 10px; }
+.msg { min-width: 0; }
+.msg .meta { font-size: 11px; color: var(--faint); display: flex; gap: 8px; margin-bottom: 2px; }
+.msg .meta .who { font-weight: 600; color: var(--muted); }
+.msg .body { overflow-wrap: anywhere; }
+.m-user .body { white-space: pre-wrap; border-left: 3px solid var(--agent); padding-left: 8px; }
+.m-pending .body { white-space: pre-wrap; border-left: 3px dashed var(--faint); padding-left: 8px; color: var(--muted); }
+.m-factory details { font-size: 12px; color: var(--muted); }
+.m-factory summary { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-factory .body { white-space: pre-wrap; margin-top: 4px; }
+.m-assistant .body p { margin: 0 0 6px; }
+.m-assistant .body ul, .m-assistant .body ol { margin: 0 0 6px; padding-left: 20px; }
+.msg code { font-family: var(--mono); font-size: .88em; background: var(--hover); padding: 0 3px; border-radius: 3px; }
+.msg pre { font-family: var(--mono); font-size: 12px; background: var(--hover); padding: 8px; border-radius: 6px; overflow-x: auto; margin: 0 0 6px; }
+.msg pre code { background: none; padding: 0; }
+#pform { border-top: 1px solid var(--line); padding: 10px 14px; background: var(--panel); }
+#ptext {
+  width: 100%; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 8px; resize: vertical; min-height: 64px; max-height: 40vh;
+}
+.prow { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.prow #phint { font-size: 12px; flex: 1; }
+.prow #phint.err { color: var(--bad); }
+#psend { font-weight: 600; }
+
+/* Narrow: the planner is a tab of its own. The page scrolls, the form stays at the bottom. */
+.narrow-only { display: none; }
+@media (max-width: 899px) {
+  body, body.pclosed { grid-template-columns: minmax(0, 1fr); }
+  main { padding: 0 16px 32px; }
+  .wide-only { display: none !important; }
+  .narrow-only { display: inline-block; }
+  #planner, body.pclosed #planner { display: none; }
+  body[data-tab=planner] #planner { display: flex; position: static; height: auto; min-height: 70vh; border-left: 0; background: var(--bg); }
+  body[data-tab=planner] main { padding-bottom: 0; }
+  body[data-tab=planner] .msgs { overflow: visible; padding: 4px 16px 10px; }
+  body[data-tab=planner] #pform { position: sticky; bottom: 0; padding: 10px 16px; background: var(--bg); }
+}
+</style>
+</head>
+<body data-tab="board">
+<main>
+  <header class="top">
+    <h1>Factory</h1>
+    <span class="chip" id="slots"></span>
+    <span class="chip muted" id="unrouted"></span>
+    <span class="chip muted" id="updated">loading</span>
+    <span class="chip offline" id="offline" role="status" hidden></span>
+    <button type="button" id="plannerToggle" class="wide-only" aria-controls="planner" aria-expanded="true">Planner</button>
+    <div class="sources" id="sources" aria-label="Sources"></div>
+  </header>
+  <nav role="tablist" aria-label="Views">
+    <button type="button" role="tab" id="tab-board" data-tab="board" aria-controls="p-board">Board</button>
+    <button type="button" role="tab" id="tab-chain" data-tab="chain" aria-controls="p-chain">Chain</button>
+    <button type="button" role="tab" id="tab-metrics" data-tab="metrics" aria-controls="p-metrics">Metrics</button>
+    <button type="button" role="tab" id="tab-planner" data-tab="planner" aria-controls="planner" class="narrow-only">Planner</button>
+  </nav>
+  <section class="panel" id="p-board" role="tabpanel" aria-labelledby="tab-board"><p class="muted">Loading the board.</p></section>
+  <section class="panel" id="p-chain" role="tabpanel" aria-labelledby="tab-chain" hidden></section>
+  <section class="panel" id="p-metrics" role="tabpanel" aria-labelledby="tab-metrics" hidden>
+    <div class="seg" role="group" aria-label="Days">
+      <button type="button" data-days="7">7 days</button><button type="button" data-days="30">30 days</button><button type="button" data-days="90">90 days</button>
+    </div>
+    <div class="grid" id="metricsGrid"></div>
+  </section>
+</main>
+<aside id="planner" aria-label="Planner chat">
+  <div class="ph">
+    <h2>Planner</h2>
+    <span class="pst" id="pstate">absent</span>
+    <button type="button" id="pclose" class="wide-only" aria-controls="planner" aria-label="Hide the planner pane">Hide</button>
+  </div>
+  <div class="msgs" id="msgs"></div>
+  <form id="pform">
+    <label for="ptext" class="muted" style="font-size:12px">Message the planner. Ctrl+Enter or Cmd+Enter sends.</label>
+    <textarea id="ptext" rows="3"></textarea>
+    <div class="prow"><span id="phint" role="status"></span><button type="submit" id="psend" disabled>Send</button></div>
+  </form>
+</aside>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const narrowMQ = window.matchMedia("(max-width: 899px)");
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private window: no memory */ } },
+};
+
+// --- helpers: every text from the server goes in through el() or esc() ---
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = String(text);
+  return e;
+}
+function isHttps(u) { return typeof u === "string" && /^https:\/\/[^\s]+$/i.test(u); }
+function link(url, text, cls) {
+  if (!isHttps(url)) return el("span", cls, text);
+  const a = el("a", cls, text);
+  a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer";
+  return a;
+}
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function ms(t) { const v = t ? Date.parse(t) : NaN; return isNaN(v) ? null : v; }
+function age(t) {
+  const v = ms(t);
+  if (v == null) return "";
+  const s = Math.max(0, Math.floor((Date.now() - v) / 1000));
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60);
+  return m < 60 ? m + "m" : m < 2880 ? Math.floor(m / 60) + "h" : Math.floor(m / 1440) + "d";
+}
+function ageEl(cls, t) {
+  const e = el("span", cls, age(t));
+  if (t) { e.dataset.t = t; e.title = new Date(ms(t)).toLocaleString(); }
+  return e;
+}
+function clock(t) {
+  const v = ms(t);
+  if (v == null) return "";
+  const d = new Date(v), today = new Date().toDateString() === d.toDateString();
+  const hm = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return today ? hm : d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + hm;
+}
+async function getJSON(url, opts) {
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 15000);
+  try {
+    const r = await fetch(url, Object.assign({ signal: ctl.signal, cache: "no-store" }, opts || {}));
+    const d = await r.json().catch(() => ({ error: "HTTP " + r.status }));
+    if (!r.ok) { const e = new Error(d.error || "HTTP " + r.status); e.status = r.status; throw e; }
+    return d;
+  } finally { clearTimeout(timer); }
+}
+
+// --- connection mark: the last data stays, the header says since when the server is out of reach ---
+const net = { offlineSince: null, lastOk: null };
+function netFail() {
+  if (!net.offlineSince) net.offlineSince = new Date();
+  $("offline").hidden = false;
+  $("offline").textContent = "offline since " + net.offlineSince.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+function netOk() { net.offlineSince = null; $("offline").hidden = true; }
+
+// --- board ---
+const GROUP_CLASS = { "YOU": "g-you", "AGENT": "g-agent", "WAITS FOR OTHERS": "g-waits", "BLOCKED": "g-blocked" };
+const STALE_MIN = { slack: 120 };
+const B = { data: null, sig: null, ticketBase: null };
+
+function ticketUrl(key) { return B.ticketBase && key ? B.ticketBase + encodeURIComponent(key) : null; }
+function prLabel(l) {
+  const m = /\/pull\/(\d+)/.exec(l.url || l.ref || "");
+  return (l.kind === "review" ? "review " : "") + (m ? "#" + m[1] : "PR");
+}
+
+function renderHeader(b) {
+  const s = $("slots");
+  s.replaceChildren(document.createTextNode("slots "), el("b", null, b.slots.used + "/" + b.slots.max));
+  const src = $("sources");
+  src.replaceChildren(...b.sources.map((x) => {
+    const v = ms(x.updated_at), lim = (STALE_MIN[x.name] || 30) * 60000;
+    const e = el("span", "src" + (v == null || Date.now() - v > lim ? " stale" : ""), x.name + " ");
+    e.appendChild(x.updated_at ? ageEl("", x.updated_at) : el("span", null, "never"));
+    return e;
+  }));
+  const un = Object.entries(b.unrouted || {});
+  $("unrouted").textContent = un.length ? "unrouted " + un.map(([k, n]) => k + " " + n).join(", ") : "";
+}
+
+function rowEl(r) {
+  const li = el("li", "row");
+  li.appendChild(el("span", "name", r.name));
+  const tl = r.ticket && (r.links || []).find((l) => l.kind === "ticket" && l.ref === r.ticket);
+  li.appendChild(r.ticket ? link(tl && tl.url, r.ticket, "key") : el("span", "key", ""));
+  li.appendChild(el("span", "title", r.title));
+  li.appendChild(el("span", "st", r.status));
+  const d = el("span", "detail", r.detail);
+  const prs = (r.links || []).filter((l) => (l.kind === "pr" || l.kind === "review") && isHttps(l.url));
+  if (prs.length) {
+    const p = el("span", "prs");
+    prs.forEach((l) => { const a = link(l.url, prLabel(l)); a.title = l.url; p.appendChild(a); });
+    d.appendChild(p);
+  }
+  li.appendChild(d);
+  li.appendChild(ageEl("age", r.since));
+  return li;
+}
+
+function groupEl(name, cls, rows, makeRow) {
+  const sec = el("section", "group " + cls);
+  const h = el("h2", null, name);
+  h.appendChild(el("span", "n", String(rows.length)));
+  const ul = el("ul", "rows");
+  rows.forEach((r) => ul.appendChild(makeRow(r)));
+  sec.append(h, ul);
+  return sec;
+}
+
+function waitRow(w) {
+  const li = el("li", "row");
+  li.append(link(ticketUrl(w.ticket), w.ticket, "key"), el("span", "title", w.title), el("span", "st", w.reason),
+            el("span", "detail muted", w.note));
+  return li;
+}
+
+function renderBoard(b) {
+  const out = [], empty = [];
+  for (const g of b.groups) {
+    const cls = GROUP_CLASS[g.name] || "g-other";
+    if (g.rows.length) out.push(groupEl(g.name, cls, g.rows, rowEl));
+    else if (g.name === "YOU") {
+      const sec = el("section", "group g-you empty"), h = el("h2", null, "YOU");
+      h.appendChild(el("span", "n", "0, nothing needs you"));
+      sec.appendChild(h); out.push(sec);
+    } else empty.push(g.name);
+  }
+  if (empty.length) out.push(el("p", "emptyline", empty.map((n) => n + " 0").join("   ")));
+  if (b.waiting.length) out.push(groupEl("WAITING TO START", "g-other wait", b.waiting, waitRow));
+  const o = el("p", "outside");
+  o.appendChild(el("b", null, "NOT IN THE FACTORY " + b.outside.length));
+  o.appendChild(document.createTextNode(b.outside.join("  ") || "none"));
+  out.push(o);
+  $("p-board").replaceChildren(...out);
+}
+
+function renderChain(b) {
+  const grp = {};
+  b.groups.forEach((g) => g.rows.forEach((r) => { if (r.ticket) grp[r.ticket] = GROUP_CLASS[g.name] || "g-other"; }));
+  function node(n) {
+    const li = el("li"), d = el("div", "node " + (grp[n.key] || ""));
+    const k = link(ticketUrl(n.key), n.key, "k");
+    d.append(k, el("span", "t", n.title), el("span", "s", n.state));
+    li.appendChild(d);
+    if (n.children && n.children.length) {
+      const ul = el("ul");
+      n.children.forEach((c) => ul.appendChild(node(c)));
+      li.appendChild(ul);
+    }
+    return li;
+  }
+  if (!b.chain.length) {
+    $("p-chain").replaceChildren(el("p", "muted", 'No open "is blocked by" link between the tickets on the board.'));
+    return;
+  }
+  const ul = el("ul", "tree");
+  b.chain.forEach((n) => ul.appendChild(node(n)));
+  const note = el("p", "muted", "A ticket under a ticket waits for it. A ticket with two blockers shows under each.");
+  note.style.fontSize = "12px";
+  $("p-chain").replaceChildren(note, ul);
+}
+
+async function loadBoard() {
+  try {
+    const b = await getJSON("/api/board");
+    netOk();
+    net.lastOk = new Date().toISOString();
+    $("updated").dataset.t = net.lastOk;
+    const sig = JSON.stringify(Object.assign({}, b, { at: null }));
+    if (sig !== B.sig) {  // same data: no DOM change, so no flicker and no lost focus
+      B.sig = sig; B.data = b;
+      for (const g of b.groups) for (const r of g.rows) for (const l of r.links || []) {
+        if (l.kind === "ticket" && isHttps(l.url) && l.url.endsWith(l.ref)) B.ticketBase = l.url.slice(0, -l.ref.length);
+      }
+      renderHeader(b); renderBoard(b); renderChain(b);
+      const you = (b.groups.find((g) => g.name === "YOU") || { rows: [] }).rows.length;
+      document.title = you ? "(" + you + ") Factory" : "Factory";
+    }
+  } catch (e) { netFail(); }
+  tick();
+}
+
+function tick() {
+  document.querySelectorAll("[data-t]").forEach((e) => {
+    const a = age(e.dataset.t);
+    e.textContent = e.id === "updated" ? "updated " + a + " ago" : a;
+  });
+  if (B.data) document.querySelectorAll(".src").forEach((e, i) => {
+    const x = B.data.sources[i], v = x && ms(x.updated_at);
+    if (x) e.classList.toggle("stale", v == null || Date.now() - v > (STALE_MIN[x.name] || 30) * 60000);
+  });
+}
+
+// --- metrics: cards drawn by kind. An unknown kind or no data shows the note only. ---
+const SVGNS = "http://www.w3.org/2000/svg";
+function svg(tag, attrs, parent, text) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text != null) e.textContent = String(text);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function num(v) {
+  if (typeof v !== "number" || !isFinite(v)) return v == null ? "" : String(v);
+  return v.toLocaleString(undefined, { maximumFractionDigits: Math.abs(v) >= 100 ? 0 : 1 });
+}
+function withUnit(v, unit) { return num(v) + (unit ? " " + unit : ""); }
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+const DRAW = {
+  stat(card, data, unit) {
+    const box = el("div", "stats");
+    data.forEach((d) => {
+      const s = el("div", "stat"), v = el("div", "v", num(d.value));
+      if (unit) v.appendChild(el("small", null, unit));
+      s.append(v, el("div", "l", d.label));
+      box.appendChild(s);
+    });
+    return box;
+  },
+  bar(card, data, unit) {
+    const max = Math.max(...data.map((d) => +d.value || 0), 0) || 1;
+    if (data.length <= 12) {  // few labels: horizontal bars, the labels stay readable
+      const box = el("div", "hbars");
+      data.forEach((d) => {
+        const lb = el("span", "lb", d.label), bar = el("span", "bar");
+        lb.title = String(d.label);
+        bar.style.width = (100 * Math.max(0, +d.value || 0) / max) + "%";
+        const track = el("span");
+        track.appendChild(bar);
+        box.append(lb, track, el("span", "vl", withUnit(d.value, unit)));
+      });
+      return box;
+    }
+    const W = 320, H = 120, L = 4, T = 14, Bm = 16, bw = (W - L) / data.length;  // many: columns
+    const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": card.title || "bar chart" });
+    svg("line", { x1: L, x2: W, y1: H - Bm, y2: H - Bm, stroke: "var(--line)" }, s);
+    const every = Math.ceil(data.length / 6);
+    data.forEach((d, i) => {
+      const h = (H - Bm - T) * Math.max(0, +d.value || 0) / max, x = L + i * bw;
+      const r = svg("rect", { x: x + bw * 0.12, y: H - Bm - h, width: Math.max(1, bw * 0.76), height: h, rx: 1.5, fill: "var(--viz)" }, s);
+      svg("title", {}, r, d.label + ": " + withUnit(d.value, unit));
+      if (i % every === 0) svg("text", { x: x + bw / 2, y: H - 3, "text-anchor": "middle" }, s, d.label);
+    });
+    svg("text", { x: L, y: 9 }, s, "max " + withUnit(max, unit));
+    return s;
+  },
+  line(card, data, unit) {
+    const vals = data.map((d) => +d.value || 0), max = Math.max(...vals, 0), min = Math.min(...vals, 0);
+    const W = 320, H = 120, L = 30, R = 8, T = 10, Bm = 18, span = max - min || 1;
+    const X = (i) => L + (data.length < 2 ? (W - L - R) / 2 : i * (W - L - R) / (data.length - 1));
+    const Y = (v) => T + (H - T - Bm) * (1 - (v - min) / span);
+    const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": card.title || "line chart" });
+    [max, min].forEach((v) => {
+      svg("line", { x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: "var(--line)" }, s);
+      svg("text", { x: L - 4, y: Y(v) + 3, "text-anchor": "end" }, s, num(v));
+    });
+    const pts = vals.map((v, i) => X(i).toFixed(1) + "," + Y(v).toFixed(1)).join(" ");
+    svg("polygon", { points: `${X(0)},${Y(min)} ${pts} ${X(vals.length - 1)},${Y(min)}`, fill: "var(--viz)", opacity: 0.12 }, s);
+    svg("polyline", { points: pts, fill: "none", stroke: "var(--viz)", "stroke-width": 1.8, "stroke-linejoin": "round" }, s);
+    vals.forEach((v, i) => {
+      const c = svg("circle", { cx: X(i), cy: Y(v), r: i === vals.length - 1 ? 3 : 6, fill: i === vals.length - 1 ? "var(--viz)" : "transparent" }, s);
+      svg("title", {}, c, data[i].label + ": " + withUnit(v, unit));
+    });
+    svg("text", { x: L, y: H - 3 }, s, data[0].label);
+    if (data.length > 1) svg("text", { x: W - R, y: H - 3, "text-anchor": "end" }, s, data[data.length - 1].label);
+    return s;
+  },
+  heat(card, data, unit) {
+    card.classList.add("wide");
+    const C = 14, L = 30, T = 14, cells = {};
+    let max = 0;
+    data.forEach((d) => { const v = +d.value || 0; cells[d.day * 24 + d.hour] = v; max = Math.max(max, v); });
+    const s = svg("svg", { viewBox: `0 0 ${L + 24 * C} ${T + 7 * C}`, role: "img", "aria-label": card.title || "heat map" });
+    s.style.maxWidth = "720px";
+    for (let h = 0; h < 24; h += 3) svg("text", { x: L + h * C + C / 2, y: 10, "text-anchor": "middle" }, s, h);
+    for (let d = 0; d < 7; d++) {
+      svg("text", { x: L - 4, y: T + d * C + C * 0.7, "text-anchor": "end" }, s, DAYS[d]);
+      for (let h = 0; h < 24; h++) {
+        const v = cells[d * 24 + h] || 0;
+        const r = svg("rect", { x: L + h * C + 1, y: T + d * C + 1, width: C - 2, height: C - 2, rx: 2,
+          fill: v ? "var(--viz)" : "var(--cell0)", "fill-opacity": v ? (0.18 + 0.82 * v / max).toFixed(2) : 1 }, s);
+        svg("title", {}, r, `${DAYS[d]} ${String(h).padStart(2, "0")}:00  ${withUnit(v, unit)}`);
+      }
+    }
+    return s;
+  },
+};
+
+const M = { days: +(store.get("techichi.days") || 30), loadedFor: null };
+function renderMetrics(cards) {
+  const grid = $("metricsGrid");
+  if (!Array.isArray(cards) || !cards.length) { grid.replaceChildren(el("p", "muted", "No metrics yet.")); return; }
+  grid.replaceChildren(...cards.map((c) => {
+    const card = el("article", "card");
+    card.appendChild(el("h3", null, c.title || c.id || ""));
+    const draw = DRAW[c.kind];
+    let drawn = false;
+    if (draw && Array.isArray(c.data) && c.data.length) {
+      try { card.appendChild(draw(card, c.data, c.unit || "")); drawn = true; } catch (e) { /* a bad shape: the note still shows */ }
+    }
+    const note = c.note || (drawn ? "" : "No data in this window.");
+    if (note) card.appendChild(el("p", "note", note));
+    return card;
+  }));
+}
+async function loadMetrics() {
+  document.querySelectorAll("[data-days]").forEach((b) => b.setAttribute("aria-pressed", String(+b.dataset.days === M.days)));
+  try { renderMetrics(await getJSON("/api/metrics?days=" + M.days)); M.loadedFor = M.days; netOk(); }
+  catch (e) { if (M.loadedFor == null) $("metricsGrid").replaceChildren(el("p", "muted", "Metrics could not load: " + e.message)); netFail(); }
+}
+document.querySelectorAll("[data-days]").forEach((b) => b.addEventListener("click", () => {
+  M.days = +b.dataset.days; store.set("techichi.days", String(M.days)); loadMetrics();
+}));
+
+// --- planner chat ---
+const P = { ids: new Set(), last: null, state: null, pending: [], timer: null, loaded: false };
+
+function unwrapPaste(t) {
+  return t.replace(/^\s*<pasted_content\b[^>]*>\s*/, "").replace(/\s*<\/pasted_content>\s*$/, "");
+}
+function norm(t) { return unwrapPaste(t).replace(/\s+/g, " ").trim(); }
+function linkify(escaped) {
+  return escaped.replace(/https:\/\/[^\s<>"']+/g, (m) => {
+    let u = m, rest = "";
+    const cut = u.search(/&(quot|#39|lt|gt);/);
+    if (cut >= 0) { rest = u.slice(cut); u = u.slice(0, cut); }
+    const tail = /[.,;:!?)\]]+$/.exec(u);
+    if (tail) { rest = tail[0] + rest; u = u.slice(0, -tail[0].length); }
+    return `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>${rest}`;
+  });
+}
+function inline(raw) {  // code spans first, then bold and links on the escaped rest
+  return raw.split(/(`[^`\n]+`)/).map((p, i) => i % 2 ? "<code>" + esc(p.slice(1, -1)) + "</code>"
+    : linkify(esc(p)).replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>")).join("");
+}
+function blocks(raw) {  // lists and paragraphs, line breaks kept
+  const out = [];
+  let list = null, para = [];
+  const flushPara = () => { if (para.length) out.push("<p>" + para.join("<br>") + "</p>"); para = []; };
+  const flushList = () => { if (list) out.push(`<${list.tag}>` + list.items.map((x) => "<li>" + x + "</li>").join("") + `</${list.tag}>`); list = null; };
+  for (const line of raw.split("\n")) {
+    const m = /^\s*([-*]|\d+[.)])\s+(.*)$/.exec(line);
+    if (m) {
+      const tag = /\d/.test(m[1]) ? "ol" : "ul";
+      flushPara();
+      if (!list || list.tag !== tag) { flushList(); list = { tag, items: [] }; }
+      list.items.push(inline(m[2]));
+    } else if (!line.trim()) { flushPara(); flushList(); }
+    else { flushList(); para.push(inline(line)); }
+  }
+  flushPara(); flushList();
+  return out.join("");
+}
+function formatAssistant(text) {  // fenced code, then blocks. Every piece of text passes through esc().
+  const out = [], re = /```[^\n]*\n([\s\S]*?)(?:```|$)/g;
+  let at = 0, m;
+  while ((m = re.exec(text))) {
+    out.push(blocks(text.slice(at, m.index)));
+    out.push("<pre><code>" + esc(m[1].replace(/\n$/, "")) + "</code></pre>");
+    at = re.lastIndex;
+  }
+  out.push(blocks(text.slice(at)));
+  return out.join("");
+}
+
+function msgEl(m) {
+  const box = el("div", "msg m-" + m.role);
+  if (m.role === "factory") {
+    const det = el("details"), sum = el("summary", null, m.text.split("\n")[0]);
+    sum.title = clock(m.at);
+    det.append(sum, el("div", "body", m.text));
+    box.appendChild(det);
+    return box;
+  }
+  const meta = el("div", "meta");
+  meta.append(el("span", "who", m.role === "assistant" ? "Planner" : "You"),
+              el("time", null, m.pending ? "sending" : clock(m.at)));
+  const body = el("div", "body");
+  if (m.role === "assistant") body.innerHTML = formatAssistant(m.text);  // built from esc() output only
+  else body.textContent = unwrapPaste(m.text);
+  box.append(meta, body);
+  return box;
+}
+
+function paneVisible() { return !document.hidden && (narrowMQ.matches ? document.body.dataset.tab === "planner" : !document.body.classList.contains("pclosed")); }
+function scroller() { return narrowMQ.matches ? document.scrollingElement || document.documentElement : $("msgs"); }
+function nearBottom() { const s = scroller(); return s.scrollHeight - s.scrollTop - s.clientHeight < 80; }
+function toBottom() { const s = scroller(); s.scrollTop = s.scrollHeight; }
+
+function renderPending() {
+  const box = $("msgs");
+  box.querySelectorAll(".m-pending").forEach((e) => e.remove());
+  P.pending.forEach((p) => box.appendChild(msgEl({ role: "pending", text: p.text, pending: true })));
+}
+
+function renderState() {
+  const st = P.state, e = $("pstate"), hint = $("phint"), btn = $("psend");
+  const s = !st || !st.present ? "absent" : st.agent_status || "unknown";
+  e.className = "pst " + s;
+  e.textContent = s === "blocked" ? "waits at a prompt" : s;
+  $("tab-planner").textContent = s === "working" ? "Planner (working)" : "Planner";
+  btn.disabled = s === "absent" || P.sending;
+  if (hint.classList.contains("err")) return;
+  hint.textContent = s === "absent" ? "No planner session runs. Send is off."
+    : s === "working" ? "The planner is busy. Your message goes to its pane now." : "";
+}
+
+async function loadPlanner() {
+  try {
+    const d = await getJSON("/api/planner" + (P.last ? "?after=" + encodeURIComponent(P.last) : ""));
+    netOk();
+    P.state = d.state;
+    const stick = !P.loaded || nearBottom();
+    const fresh = (d.messages || []).filter((m) => { const k = m.id || m.at + m.text; if (P.ids.has(k)) return false; P.ids.add(k); return true; });
+    if (fresh.length) {
+      const box = $("msgs");
+      box.querySelectorAll(".m-pending").forEach((e) => e.remove());
+      fresh.forEach((m) => box.appendChild(msgEl(m)));
+      for (const m of fresh) {
+        if (m.id) P.last = m.id;
+        if (m.role === "user") { const i = P.pending.findIndex((p) => norm(p.text) === norm(m.text)); if (i >= 0) P.pending.splice(i, 1); }
+      }
+      renderPending();
+      if (stick) toBottom();
+    }
+    if (!P.loaded && !fresh.length) $("msgs").replaceChildren(el("p", "muted", "No messages yet."));
+    else if (fresh.length) $("msgs").querySelectorAll(":scope > p.muted").forEach((e) => e.remove());
+    P.loaded = true;
+    renderState();
+  } catch (e) { netFail(); }
+  schedulePlanner();
+}
+function schedulePlanner() {
+  clearTimeout(P.timer);
+  if (document.hidden) return;
+  const fast = paneVisible() && ((P.state && P.state.agent_status === "working") || P.pending.length);
+  P.timer = setTimeout(loadPlanner, fast ? 3000 : 15000);
+}
+
+async function send() {
+  const ta = $("ptext"), text = ta.value, hint = $("phint");
+  if (!text.trim() || $("psend").disabled) return;
+  P.sending = true; renderState();
+  try {
+    const d = await getJSON("/api/planner/send", { method: "POST", headers: { "Content-Type": "application/json", "X-Techichi": "1" },
+                                                    body: JSON.stringify({ text }) });
+    if (d.ok) {
+      ta.value = ""; store.set("techichi.draft", "");
+      hint.classList.remove("err");
+      P.pending.push({ text });
+      renderPending(); toBottom();
+      setTimeout(loadPlanner, 1500);
+    } else { hint.classList.add("err"); hint.textContent = "Not sent: " + d.error; }
+  } catch (e) {
+    hint.classList.add("err"); hint.textContent = "Not sent: " + (e.status ? e.message : "the server is out of reach");
+  } finally { P.sending = false; renderState(); }
+}
+$("pform").addEventListener("submit", (e) => { e.preventDefault(); send(); });
+$("ptext").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } });
+$("ptext").addEventListener("input", () => {
+  store.set("techichi.draft", $("ptext").value);
+  if ($("phint").classList.contains("err")) { $("phint").classList.remove("err"); renderState(); }
+});
+$("ptext").value = store.get("techichi.draft") || "";
+
+// --- tabs and the planner pane ---
+const TABS = [...document.querySelectorAll("[role=tab]")];
+function selectTab(name, focus) {
+  if (name === "planner" && !narrowMQ.matches) name = "board";
+  document.body.dataset.tab = name;
+  TABS.forEach((t) => {
+    const on = t.dataset.tab === name;
+    t.setAttribute("aria-selected", String(on));
+    t.tabIndex = on ? 0 : -1;
+    if (on && focus) t.focus();
+  });
+  ["board", "chain", "metrics"].forEach((n) => { $("p-" + n).hidden = n !== name; });
+  store.set("techichi.tab", name);
+  if (name === "metrics" && M.loadedFor !== M.days) loadMetrics();
+  if (name === "planner") { renderPending(); toBottom(); }
+  schedulePlanner();
+}
+TABS.forEach((t) => {
+  t.addEventListener("click", () => selectTab(t.dataset.tab));
+  t.addEventListener("keydown", (e) => {
+    const vis = TABS.filter((x) => narrowMQ.matches || x.dataset.tab !== "planner"), i = vis.indexOf(t);
+    const j = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: vis.length - 1 }[e.key];
+    if (j == null) return;
+    e.preventDefault();
+    selectTab(vis[(j + vis.length) % vis.length].dataset.tab, true);
+  });
+});
+function setPane(open) {
+  document.body.classList.toggle("pclosed", !open);
+  $("plannerToggle").setAttribute("aria-expanded", String(open));
+  $("plannerToggle").hidden = open;
+  store.set("techichi.pane", open ? "open" : "closed");
+  if (open) toBottom();
+  schedulePlanner();
+}
+$("plannerToggle").addEventListener("click", () => { setPane(true); $("ptext").focus(); });
+$("pclose").addEventListener("click", () => { setPane(false); $("plannerToggle").focus(); });
+narrowMQ.addEventListener("change", () => selectTab(document.body.dataset.tab));
+
+// --- the loops: board every 30 s, all polls paused while the page is hidden ---
+let boardTimer = null;
+async function boardLoop() {
+  clearTimeout(boardTimer);
+  await loadBoard();
+  if (!document.hidden) boardTimer = setTimeout(boardLoop, 30000);
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { clearTimeout(boardTimer); clearTimeout(P.timer); return; }
+  boardLoop(); loadPlanner();
+  if (document.body.dataset.tab === "metrics") loadMetrics();
+});
+setInterval(() => { if (!document.hidden) tick(); }, 5000);
+
+setPane(store.get("techichi.pane") !== "closed");
+selectTab(store.get("techichi.tab") || "board");
+boardLoop();
+loadPlanner();
+</script>
+</body>
+</html>

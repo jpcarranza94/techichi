@@ -1,0 +1,17 @@
+# The web board as a systemd user unit. `install.py board` fills in the paths. See DESIGN.md "Web board".
+# Start:  systemctl --user daemon-reload && systemctl --user enable --now techichi-board
+# Log:    journalctl --user -u techichi-board -f
+# Stop:   systemctl --user disable --now techichi-board
+[Unit]
+Description=techichi web board
+
+[Service]
+ExecStart={python} {core}/board.py
+WorkingDirectory={home}
+Environment=TECHICHI_HOME={home}
+Environment=PATH={path}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

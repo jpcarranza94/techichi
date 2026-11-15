@@ -69,6 +69,8 @@ The `plan` table has one row for each planned ticket: `position` (1 starts first
 
 The `needs` table has one row for each Session that waits for the operator: the need as `text`, and the time `at`. `factory.py needs` writes it. The attention hook deletes it.
 
+The `refs` table holds the last snapshot of each `pr` and `ticket` Ref that the GitHub and Jira Sources read. The `status_log` table holds the board status of each Session over time. See "Board". `registry.connect()` runs `schema.sql` on each open, so a live registry gets new tables with `CREATE TABLE IF NOT EXISTS`.
+
 SQLite cannot change a CHECK constraint. `registry.connect()` rebuilds the `sessions` table one time when its role check lacks a role of the check in `schema.sql`, for example `planner` or `reviewer`. It creates the new table, copies the rows, drops the old table, and renames the new one. A rename of the old table first would move the foreign keys of `links` and `events` to the old name.
 
 | Source | id |
@@ -139,6 +141,14 @@ Handle it per the techichi-worker skill.
 The behavior for each kind lives in one user skill, the worker skill (`[skills] worker`). A prompt to the planner names the planner skill (`[skills] planner`) instead. A prompt to a reviewer names the reviewer skill (`[skills] reviewer`), and its first line names the PR: `[factory] 1 item for PR 5.` The registry carries no behavior.
 
 When a worker, a reviewer, or the planner needs the operator, the skill tells it to run `factory.py needs TEXT` and to write the need in plain text. The command flags the pane in herdr (see Commands). The flag is display only. The pane stays `idle` or `done`, so Rule 5 still delivers Events to it. A question tool or a permission prompt still makes the pane `blocked`, and Rule 5 holds its Events.
+
+## Planner chat
+
+`planner_chat.py` lets a web pane talk to the same planner Session as its terminal. It has no HTTP code.
+
+- `send(con, text)` prompts the planner pane with the operator's text. It rejects an empty text, a text over 8000 characters, and a text that starts with `[factory]`: the attention hook would not take it as the operator's answer. It returns `{"ok": true}` or `{"ok": false, "error": ...}` and never raises.
+- `messages(con, after=None, limit=50)` reads the planner's transcript, the file that `harness.transcript()` names. It keeps the operator prompts, the assistant text, and the `[factory]` prompts as role `factory`. It drops tool calls and results, thinking, tags, meta and sidechain lines, and compaction summaries. Each message has the line `uuid` as its id. It reads the tail of the file and widens the read only when it needs more. A harness with no transcript gives an empty list.
+- `state(con)` gives `present`, `agent_status`, and `session_id` of the planner.
 
 ## Spawn
 
@@ -216,6 +226,8 @@ Before each Router pass, the daemon polls each Source in `[factory] sources`, ea
 
 Held Events older than `notify_after_minutes` write one log line. The daemon does not page the operator. A held Event almost always means a blocked pane, and a herdr notifier already pages the operator for that.
 
+Last in each pass, the daemon appends the board status of each Session to `status_log`. See "Board".
+
 `python3 daemon.py --once` runs one pass and exits.
 
 Install the service with `python3 <core>/install.py service`. It picks the OS:
@@ -277,13 +289,13 @@ The Source also reads failed checks and merge conflicts. `poll()` runs `checks()
 
 - It reads each distinct `pr` and `review` Link of a Session that is not `ended`, in a repo that `policy.toml` lists as `github`.
 - A `review` Link gets no check or conflict Event, because a reviewer does not fix the PR of another person. It gets a new head commit, because GitHub sends no notification for a push. The cursor `github:head:<PR URL>` keeps the last head. The first read only sets it. A different head is `gh:commit:<sha>`, the id of the notification push, what `push`, actor the PR author, url the commit.
-- One read for each PR: `gh pr view <URL> --json state,headRefOid,baseRefName,mergeable,statusCheckRollup,author`. It skips a PR whose `state` is not `OPEN`.
+- One read for each PR: `gh pr view <URL> --json state,headRefOid,baseRefName,mergeable,statusCheckRollup,author,number,title,isDraft,reviewDecision,reviewRequests,latestReviews,updatedAt,mergedAt,commits`. It stores the snapshot of the PR in `refs` for the board, also for a merged or closed PR. See "Board". A failed store writes one log line and does not stop the Events. Then it skips a PR whose `state` is not `OPEN`.
 - A check failed on the head commit: a `CheckRun` with conclusion `FAILURE`, `TIMED_OUT`, or `STARTUP_FAILURE`, or a `StatusContext` with state `FAILURE` or `ERROR`. A `CANCELLED` run makes no Event, because a newer push cancels the runs of the old head. Each one is `gh:check:<head sha>:<name or context>`, kind `pr`, what `check failed: <name>`, actor `ci`, at `completedAt` or now, url the check link or the PR.
 - `mergeable` is `CONFLICTING`: `gh:conflict:<PR URL>:<head sha>`, what `merge conflict with <base>`, actor `github`, url the PR. `UNKNOWN` means that GitHub still computes it, so it makes no Event. The next run sees it.
 - `self` is false. The ids deduplicate the runs on the same head. A new push gives new ids.
 - These Events carry no `head`, because the `pr` Link already routes them.
 
-`python3 github_source.py --dry-run [--since <ISO time>]` prints the Events and writes nothing, not even the cursor.
+`python3 github_source.py --dry-run [--since <ISO time>]` prints the Events and writes nothing, not even the cursor or a snapshot.
 
 ## Jira Source
 
@@ -295,8 +307,9 @@ The Source also reads failed checks and merge conflicts. `poll()` runs `checks()
 - Updates: the Source searches `project in (<policy projects>) AND updated >= -<N>m` and keeps only the tickets with a `ticket` Link to a Session that is not `ended`. The search never names the linked keys, because one deleted or bogus key can fail it. N is the minutes since the `jira` cursor plus 10. Relative JQL avoids the Jira time zone. Each comment becomes `jira:comment:<id>`, and each changelog history becomes `jira:changelog:<id>`. A history that changes only `Rank` makes no Event: each move on the board changes it. Items older than the cursor minus 10 minutes are skipped. Event ids deduplicate the overlap. If the embedded comment list is cut, the Source reads the newest page from `/issue/<key>/comment`. The embedded changelog holds the newest 40 histories.
 - `self` is true when the author is the `/myself` account of the token.
 - The cursor `jira` is the start time of the last good poll. On the first run the Source sets it and inserts no update Events. Admissions run on every poll.
+- Snapshots: after the Events, one more search, `key in (...)` with the fields `summary,status,issuelinks`, for each ticket with a `ticket` Link to a Session that is not `ended` and each admitted ticket that waits. Only keys of policy projects go in, because a hook can record a bogus key. It stores each one in `refs` for the board. See "Board". A failure writes one log line and does not stop the Events. One deleted key fails this search, and the snapshots then go stale.
 
-`python3 jira_source.py --dry-run [--since <ISO time>]` prints the Events and writes nothing, not even a cursor.
+`python3 jira_source.py --dry-run [--since <ISO time>]` prints the Events and writes nothing, not even a cursor. It makes no snapshot search.
 
 ## Slack Source
 
@@ -388,12 +401,91 @@ The poll reads text from anyone, external Slack Connect users included. So it ru
 
 ## Commands
 
-`factory.py` holds the operator's three commands and the `needs` command of a Session. They are plain commands. A herdr plugin can wrap them later.
+`factory.py` holds the operator's commands and the `needs` command of a Session. They are plain commands. A herdr plugin can wrap them later.
 
 - `factory.py claim REF [--session PANE|NAME|UUID]`: link a Session to a Ref with `created_by = claim`. REF is a ticket key of a policy project, a PR URL of a policy repo, or a Slack permalink, stored as `<channel>:<thread_ts or ts>`. Anything else is rejected. The default Session is the caller's pane. A missing Session row is inserted from the herdr agent record. The next Router pass delivers the `unrouted` Events of that Ref, and an admitted ticket with a Link does not spawn. There is no `unclaim`.
 - `factory.py needs TEXT [--session PANE|NAME|UUID]` and `factory.py needs --clear [--session ...]`: a Session runs it when it waits for the operator. It finds the Session as `claim` does. It writes the `needs` row with TEXT and the time, and replaces an older row. It reports pane metadata with the source `<[factory] metadata_source>.attention`: the display name `⚑ <agent name>` (else `⚑ <ticket token>`), and the `idle` and `done` labels `needs you: TEXT`. herdr clients and Ovis show the display name. Waits, notifications, and the herdr status do not change. `--clear` deletes the row and clears the metadata. An empty TEXT is an error.
 - `factory.py status`: read only. The Sessions that are not `ended`, with role, agent name or pane, state, agent status, ticket, PRs (a reviewer shows its review PR), and held count. The Sessions of that list that wait for the operator, oldest first, with the need and its time. The slots in use against `max_active`. The waiting admitted tickets with their reasons. The unrouted Events by kind. The last write of each Source cursor, and the summary line of the last Slack poll (`slack:last`) with its time. The planner.
+- `factory.py board [--json] [--chain]`: read only. One status for each Session, in groups, from the rules in "Board". It shows the slots, the age of each Source, the waiting tickets, the Sessions outside the factory, and the unrouted Events. Color only on a terminal. `--json` prints the dict of `status.board`. `--chain` prints the tree of blockers.
 - `factory.py cleanup KEY`: run the cleanup Action for each worker Session on that ticket, a hand-started one too. It skips the ticket, PR, and idle checks, and it keeps the clean-worktree check. There is no `--force`. It also works for a `gone` or `ended` Session whose workspace is closed and whose checkout is left. It does not end a reviewer: close the reviewer's workspace, or wait for the daemon.
+
+## Board
+
+`factory.py board` shows one status for each Session. Fixed rules decide it. The board uses no AI. `status.py` holds the rules. It is pure, like the Router: it reads the registry and never writes, never calls herdr, and never reads the network. It reads the snapshots that the Sources store.
+
+Tables:
+
+- `refs(kind, ref, state, updated_at)`: the last snapshot of a Ref, as JSON in `state`. The Sources write it, see "GitHub Source" and "Jira Source". A row stays after its Session ends.
+  - Kind `pr`, ref the PR URL, for a `pr` and a `review` Link: `number`, `title`, `state`, `isDraft`, `reviewDecision`, `reviewRequests` (logins, or team names), `latestReviews` (`login`, `state`, `submittedAt`, and `self`: the review is by the `gh` login), `failedCheck` (the first failed check, or null), `pendingChecks`, `mergeable`, `baseRefName`, `author` (login), `updatedAt`, `mergedAt`, `lastCommitAt` (the newest commit date).
+  - Kind `ticket`, ref the key: `summary`, `status` (the name), `statusCategory` (the key), and `blockers`: each `issuelinks` entry whose `type.inward` is `is blocked by` and that has an `inwardIssue`, with `key`, `summary`, `status`, and `done` (category `done`).
+- `status_log(session_id, grp, status, at)`: append only. After each pass, the daemon computes the status of each Session on the board. It inserts a row when `(grp, status)` differs from the last row of that Session. The first row of a Session takes the time that the rule gives, because the status is older than the log. When a Session with a row ends, it inserts one row with grp `ENDED` and status `ended`. A failure writes one log line and never breaks the pass. The board takes `since` from this table. Later metrics read it too.
+
+A row of the board is a Session that is not `ended`, that is not the planner, and that has a `ticket`, `pr`, or `review` Link or a `needs` row. The other Sessions are "outside". The ticket of a row is its first `ticket` Link of a policy project, because a hook can record a bogus key.
+
+The rules apply in order. The first match wins. Each one gives a group, a status, a detail, and a time.
+
+1. A `needs` row: `YOU`, `needs you`, the need.
+2. Agent status `blocked`: `YOU`, `needs you`. The agent waits at a prompt.
+3. Agent status `working`: `AGENT`, `working`.
+4. A `pr` or `review` Link has no snapshot, or the ticket has none while `jira` is a Source: `CHECK`, `no data yet`.
+5. A reviewer. Its PR is not `OPEN`: `CAN CLOSE`. No review by the operator: `CHECK`, `review not posted`. A commit after that review: `AGENT`, `check again`. Else `WAITS FOR OTHERS`, `reviewed`.
+6. An open PR. Each open PR gets a status. The first rule that matches wins:
+   - `reviewDecision` is `CHANGES_REQUESTED`, a check failed, or `mergeable` is `CONFLICTING`: `AGENT`, `fix needed`.
+   - A draft: `draft`, with no group.
+   - `APPROVED` with checks that still run: `WAITS FOR OTHERS`, `approved`. `APPROVED` with no check that runs: `YOU`, `ready to merge`.
+   - Else `WAITS FOR OTHERS`, `in review`, with the requested reviewers. GitHub removes a reviewer from the requests when it posts a review, so with no request the detail names the posters and their state, and `NO REVIEWER` if none posted. Logins in `[board] bots` and logins that end with `[bot]` do not count. A comment-only review keeps the PR `in review`.
+   - A base branch outside `[board] trunks` adds `on <base>`: the PR is a stack.
+
+   The best PR status wins, in the order `fix needed`, `ready to merge`, `approved`, `in review`, `draft`, unless it is a draft. The detail names the other open PRs too.
+7. The ticket has a blocker that is not done: `BLOCKED`.
+8. Only drafts are open: `CHECK`, `draft`.
+9. The PRs are closed and the Jira status is not in `[cleanup] done_statuses`: `MERGED, NOT DONE`.
+10. The PRs are closed: `CAN CLOSE`. A ticket outside Jira also gets this.
+11. Else: `CHECK`, `no PR`.
+
+The groups show in this order: `YOU`, `AGENT`, `WAITS FOR OTHERS`, `BLOCKED`, `MERGED, NOT DONE`, `CAN CLOSE`, `CHECK`. In a group the oldest row comes first. `since` is the time of the last `status_log` row of the Session when that row holds the current status. Else it is the time of the rule: the need, the PR update, or the review.
+
+`status.board(con, pol, names)` returns one dict, and `factory.py board --json` prints it: `at`, `slots` (`used`, `max`), `sources` (`name`, `updated_at` of the cursor of its last good read), `groups` (`name`, `rows`), `waiting` (the admitted tickets that wait: `ticket`, `title`, `reason`, `note`), `outside` (names), `unrouted` (count by kind), `chain`, and `planner` (`session_id`, `pane_id`, `agent_status`, or null). A row has `session_id`, `name`, `role`, `project`, `ticket`, `title`, `status`, `detail`, `since`, `pane_id`, `workspace_id`, and `links` (`kind`, `ref`, `url`). A ticket url uses `[jira] site`.
+
+`chain` is the tree of open `is blocked by` links between the tickets on the board and the waiting ones. A root blocks a ticket and is not blocked by one. A ticket with two blockers shows under each. A blocker with no Session shows `Jira: <status>, no session`. A cycle stops the walk. `factory.py board --chain` prints the tree.
+
+### Web board
+
+`board.py` serves the board as a web page. It is a `ThreadingHTTPServer` on `[board] host` and `[board] port`, by default `127.0.0.1:8377`. It opens one registry connection for each request. It reads the registry and never writes it. Its one Action is `planner_chat.send`.
+
+Endpoints:
+
+- `GET /`: `board.html`, read from disk on each request. It is one file with inline CSS and JS. It loads nothing from another host.
+- `GET /api/board`: the dict of `status.board`, with the agent names from `factory.agent_names()`.
+- `GET /api/metrics?days=30`: the cards of `metrics.compute`. Without `metrics.py`, an empty list.
+- `GET /api/planner?after=<id>`: `state` and `messages` of `planner_chat`.
+- `POST /api/planner/send` with `{"text": ...}`: the reply of `planner_chat.send`.
+
+The page has a Board tab, a Chain tab, and a Metrics tab, and the planner chat as a side pane. On a narrow screen the planner is a tab. The page reads the board every 30 seconds. It reads the planner every 3 seconds while the pane shows and the planner works, else every 15 seconds. A hidden page reads nothing. After a failed read, the page keeps the last data and shows "offline since".
+
+The security boundary: the server has no login. The network boundary is the access control. The server binds loopback, and only a private proxy such as `tailscale serve` exposes it. Anyone who reaches the port can prompt the planner, and the planner has the operator's logins. So the server adds these guards:
+
+- A request whose `Host` header is not in `[board] hosts` gets 403. This stops DNS rebinding.
+- The POST needs `Content-Type: application/json`, the header `X-Techichi: 1`, and, when an `Origin` header is present, an Origin host equal to the `Host` header. A page on another site cannot send this request without a CORS preflight. The server never answers a preflight (`OPTIONS` gets 501) and sends no CORS header.
+- The body is at most 16 KB.
+- Each reply has `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'self' 'unsafe-inline'; frame-ancestors 'none'`, `Referrer-Policy: no-referrer`, and `Cache-Control: no-store`.
+- The page treats all text from the registry and the transcript as data. It inserts the text as text, or escapes it first. Only `https://` URLs become links.
+- An exception gives a JSON error with the exception type, never a traceback. The server keeps running. It writes no access log.
+
+`install.py board` writes the service file of the web board: `<config>/techichi-board.plist` on macOS (label `techichi-board`, log `<config>/board.log`), or `~/.config/systemd/user/techichi-board.service` on Linux. It prints the commands that start it and starts nothing. `install.py` with no argument does not write it.
+
+### Metrics
+
+`metrics.compute(con, pol, days=30)` returns the cards of the Metrics tab, in display order. It is pure, like `status.py`: SQL reads only. Each card is `id`, `title`, `note`, `kind` (`stat`, `bar`, `line`, `heat`), `unit`, and `data`. A `heat` cell is a local weekday (Monday = 0) and hour. A card with no data shows its note on when data starts. A card that fails has no data and the note `error: <type>`. The window is the last `days` days.
+
+- `now`: the board now. Sessions on it, the ones in `YOU`, the oldest `since` in `YOU`, `AGENT`, or `WAITS FOR OTHERS` and its group, and the slots in use.
+- `answer`, `answer_by_hour`, `answers_heat`: a wait is a `status_log` row with status `needs you`, until the next row of its Session. Only waits that ended in the window count. The median and the slowest, the median by the local hour of the start, and the end times by weekday and hour.
+- `time_by_group`: the hours of all `status_log` rows in each group, cut to the window. The last row of a Session runs until now, unless it is `ENDED`.
+- `review_wait`: for each PR and person, the first review Event (`review approved`, `review commented`, `review changes requested`) minus the last `push` or `review requested` Event on that PR before it. The median for each person. Bots and people who pushed to the PR do not count, because a reply of the author to a review comment is a review too. The operator shows as `you`. A `push` time is the commit date. The Events of 14 days before the window count as starts.
+- `start_to_merge`, `merged_per_week`: a PR of a `pr` Link whose snapshot in `refs` has state `MERGED`. No Event marks a merge, so the merge time is the `mergedAt` of the snapshot. The start is the first `created_at` of a Session with the `pr` Link.
+- `review_rounds`: the PRs of a `pr` Link with a review by a person in the window, by their count of `review changes requested` Events: 0, 1, 2, 3+.
+- `activity`: all Events by the local weekday and hour of the payload `at`.
+- `slots`: the most spawned workers and reviewers that ran at the same time on each local day, sampled each hour. A Session runs from `created_at` to `ended_at`, or `last_seen` when `gone`, or now when `registered` or `live`.
 
 ## Cleanup
 
@@ -434,7 +526,7 @@ Each Session gets one try. The cursor `closed:<session_id>` records it. After a 
 
 ## Policy
 
-The file is `<config>/policy.toml`. `policy.example.toml` documents each key. It has a `[factory]` table, a `[skills]` table, one `[projects.<KEY>]` table per project, a `[route]` table, a `[hold]` table, a `[spawn]` table, a `[jira]` table, a `[slack]` table, and a `[cleanup]` table. Default branches are not in the file. The spawner reads them from GitHub or from git at run time.
+The file is `<config>/policy.toml`. `policy.example.toml` documents each key. It has a `[factory]` table, a `[skills]` table, one `[projects.<KEY>]` table per project, a `[route]` table, a `[hold]` table, a `[spawn]` table, a `[jira]` table, a `[slack]` table, a `[cleanup]` table, and a `[board]` table. Default branches are not in the file. The spawner reads them from GitHub or from git at run time.
 
 `config.policy()` is the only reader of the file. It fills every default and checks the required keys: one `[projects.<KEY>]` table with `repo` and `start.skill` (`github` and `admit` are optional), the `[jira]` keys when `jira` is a Source, and the `[slack]` keys when `[slack]` exists. A missing key stops `install.py`, `daemon.py --once`, and each command with one line, for example `policy.toml: [jira] needs token_file`. No module repeats a default.
 
@@ -450,6 +542,8 @@ Timers live in the `cursors` table. `registry.due(name)` and `registry.wait(name
 Each `[projects.<KEY>]` table can list `setup` and `teardown` shell commands. Both default to `[]`. The spawner runs `setup` in a new worktree. The cleanup Action runs `teardown` in the checkout before it removes it. See "Cleanup".
 
 `[skills]` holds the skill names for `worker`, `planner`, and `reviewer`, and an optional `extra` folder. `install.py skills` renders each core template in `skills/` into `<config>/skills/<name>/SKILL.md`. It fills in `{factory}` (the core path) and `{home}` (the config path), sets the name, and appends `<extra>/<role>.md`. For a harness with `skills = link` (Claude Code), it links every skill into `~/.claude/skills`. Pi gets the folder with `--skill`.
+
+`[board]` holds `bots`, the review logins that the board does not name as reviewers, and `trunks`, the base branches that are not a stack. It also holds `host` and `port` of the web board, default `127.0.0.1` and `8377`, and `hosts`, the `Host` headers that it accepts, default `127.0.0.1:<port>` and `localhost:<port>`. See "Board" and "Web board".
 
 ## Layout
 
@@ -474,7 +568,10 @@ Each `[projects.<KEY>]` table can list `setup` and `teardown` shell commands. Bo
   jira_source.py   the Jira Source
   slack_source.py  the Slack Source and its poll: one claude -p for each poll
   plan.py          the planner tool, the only writer of the plan table
-  factory.py       claim, needs, status, cleanup
+  factory.py       claim, needs, status, board, cleanup
+  status.py        the board rules: one status for each Session. Pure.
+  board.py         the web board: the HTTP server and its guards
+  board.html       the web board page, with inline CSS and JS
   launchd/         the LaunchAgent template (macOS)
   systemd/         the systemd user unit template (Linux)
   examples/        command Sources, for example github_issues.py
@@ -487,6 +584,7 @@ Each `[projects.<KEY>]` table can list `setup` and `teardown` shell commands. Bo
   skills/<name>/SKILL.md
                    the rendered skills
   daemon.log       the daemon log
+  board.log        the web board log (macOS service)
 ```
 
 Set `TECHICHI_HOME` to point a test run at another config folder. `TECHICHI_HERDR`, `TECHICHI_GIT`, and `TECHICHI_GH` override the binary lookup.
