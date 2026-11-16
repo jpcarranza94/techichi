@@ -233,6 +233,7 @@ nav [role=tab][aria-selected=true] { color: var(--fg); border-bottom-color: var(
   body, body.pclosed { grid-template-columns: minmax(0, 1fr); }
   main { padding: 0 16px 32px; }
   .wide-only { display: none !important; }
+  .card svg.heat text { font-size: 13px; }  /* the map shrinks to the phone width: keep the labels readable */
   .narrow-only { display: inline-block; }
   #planner, body.pclosed #planner { display: none; }
   body[data-tab=planner] #planner { display: flex; position: static; height: auto; min-height: 70vh; border-left: 0; background: var(--bg); }
@@ -570,7 +571,7 @@ function num(v) {
   if (typeof v !== "number" || !isFinite(v)) return v == null ? "" : String(v);
   return v.toLocaleString(undefined, { maximumFractionDigits: Math.abs(v) >= 100 ? 0 : 1 });
 }
-function withUnit(v, unit) { return num(v) + (unit ? " " + unit : ""); }
+function withUnit(v, unit) { return num(v) + (unit ? " " + (+v === 1 ? unit.replace(/s$/, "") : unit) : ""); }
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const DRAW = {
@@ -637,7 +638,7 @@ const DRAW = {
     const C = 18, L = 32, T = 16, cells = {};
     let max = 0;
     data.forEach((d) => { const v = +d.value || 0; cells[d.day * 24 + d.hour] = v; max = Math.max(max, v); });
-    const s = svg("svg", { viewBox: `0 0 ${L + 24 * C} ${T + 7 * C}`, role: "img", "aria-label": card.title || "heat map" });
+    const s = svg("svg", { viewBox: `0 0 ${L + 24 * C} ${T + 7 * C}`, role: "img", class: "heat", "aria-label": card.title || "heat map" });
     s.style.maxWidth = (L + 24 * C) + "px";  // drawn at 1:1, so the labels keep the size of the other charts
     for (let h = 0; h < 24; h += 3) svg("text", { x: L + h * C + C / 2, y: 10, "text-anchor": "middle" }, s, h);
     for (let d = 0; d < 7; d++) {
@@ -767,7 +768,8 @@ function renderState() {
   e.className = "pst " + s;
   // herdr words to operator words: "done" means the planner ended its turn and is idle.
   e.textContent = { done: "idle", idle: "idle", working: "working", blocked: "waiting at a prompt", absent: "not running" }[s] || s;
-  $("tab-planner").textContent = s === "working" ? "Planner (working)" : "Planner";
+  // The tab row stays in view on a phone, so it carries each state that is not idle.
+  $("tab-planner").textContent = "Planner" + ({ working: " (working)", blocked: " (waiting)", absent: " (off)" }[s] || "");
   btn.disabled = s === "absent" || P.sending;
   if (hint.classList.contains("err")) return;
   hint.textContent = s === "absent" ? "No planner session runs. Send is off."
